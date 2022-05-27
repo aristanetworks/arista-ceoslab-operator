@@ -1,0 +1,6 @@
+apiVersion: aristanetworks.com.my.domain/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslabdevice-sample
+spec:
+  # TODO(user): Add fields here

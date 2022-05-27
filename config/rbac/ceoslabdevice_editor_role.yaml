@@ -1,0 +1,24 @@
+# permissions for end users to edit ceoslabdevices.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ceoslabdevice-editor-role
+rules:
+- apiGroups:
+  - aristanetworks.com.my.domain
+  resources:
+  - ceoslabdevices
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - aristanetworks.com.my.domain
+  resources:
+  - ceoslabdevices/status
+  verbs:
+  - get
