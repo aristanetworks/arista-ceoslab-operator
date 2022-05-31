@@ -28,14 +28,19 @@ type CEosLabDeviceSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Foo is an example field of CEosLabDevice. Edit ceoslabdevice_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// Device hostname
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // CEosLabDeviceStatus defines the observed state of CEosLabDevice
 type CEosLabDeviceStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// Device status
+	Status string `json:"status,omitempty"`
+	// Reason for potential failure
+	Reason string `json:"reason,omitempty"`
 }
 
 //+kubebuilder:object:root=true
