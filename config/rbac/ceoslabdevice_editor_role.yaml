@@ -5,7 +5,7 @@ metadata:
   name: ceoslabdevice-editor-role
 rules:
 - apiGroups:
-  - aristanetworks.com.my.domain
+  - ceoslab.arista.com
   resources:
   - ceoslabdevices
   verbs:
@@ -17,7 +17,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - aristanetworks.com.my.domain
+  - ceoslab.arista.com
   resources:
   - ceoslabdevices/status
   verbs:

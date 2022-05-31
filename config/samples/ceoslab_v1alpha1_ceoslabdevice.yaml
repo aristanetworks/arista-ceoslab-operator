@@ -1,4 +1,4 @@
-apiVersion: aristanetworks.com.my.domain/v1alpha1
+apiVersion: ceoslab.arista.com/v1alpha1
 kind: CEosLabDevice
 metadata:
   name: ceoslabdevice-sample

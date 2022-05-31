@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	aristanetworkscomv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
+	ceoslabv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
 	"gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/controllers"
 	//+kubebuilder:scaffold:imports
 )
@@ -44,7 +44,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(aristanetworkscomv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(ceoslabv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -71,7 +71,7 @@ func main() {
 		Port:                   9443,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "a8645112.my.domain",
+		LeaderElectionID:       "a8645112.arista.com",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

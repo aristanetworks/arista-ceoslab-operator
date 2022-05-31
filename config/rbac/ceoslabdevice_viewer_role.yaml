@@ -5,7 +5,7 @@ metadata:
   name: ceoslabdevice-viewer-role
 rules:
 - apiGroups:
-  - aristanetworks.com.my.domain
+  - ceoslab.arista.com
   resources:
   - ceoslabdevices
   verbs:
@@ -13,7 +13,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - aristanetworks.com.my.domain
+  - ceoslab.arista.com
   resources:
   - ceoslabdevices/status
   verbs:

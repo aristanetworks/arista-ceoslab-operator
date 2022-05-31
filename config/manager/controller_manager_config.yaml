@@ -8,4 +8,4 @@ webhook:
   port: 9443
 leaderElection:
   leaderElect: true
-  resourceName: a8645112.my.domain
+  resourceName: a8645112.arista.com

@@ -24,7 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aristanetworkscomv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
+	ceoslabv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
 )
 
 // CEosLabDeviceReconciler reconciles a CEosLabDevice object
@@ -33,9 +33,9 @@ type CEosLabDeviceReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-//+kubebuilder:rbac:groups=aristanetworks.com.my.domain,resources=ceoslabdevices,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=aristanetworks.com.my.domain,resources=ceoslabdevices/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=aristanetworks.com.my.domain,resources=ceoslabdevices/finalizers,verbs=update
+//+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -57,6 +57,6 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // SetupWithManager sets up the controller with the Manager.
 func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&aristanetworkscomv1alpha1.CEosLabDevice{}).
+		For(&ceoslabv1alpha1.CEosLabDevice{}).
 		Complete(r)
 }
