@@ -28,8 +28,14 @@ type CEosLabDeviceSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Device hostname
-	Hostname string `json:"hostname,omitempty"`
+	// Default: CR name
+	Hostname string            `json:"hostname,omitempty"`
+	// Environment variables
+	EnvVar   map[string]string `json:"envvars,omitempty"`
+	// Default: ceos:latest
+	Image    string            `json:"image,omitempty"`
+	// Default: ssh:22, ssl:443, gnmi:6030
+	Ports    map[string]int32  `json:"ports,omitempty"`
 }
 
 // CEosLabDeviceStatus defines the observed state of CEosLabDevice
@@ -38,7 +44,7 @@ type CEosLabDeviceStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Device status
-	Status string `json:"status,omitempty"`
+	State string  `json:"status,omitempty"`
 	// Reason for potential failure
 	Reason string `json:"reason,omitempty"`
 }

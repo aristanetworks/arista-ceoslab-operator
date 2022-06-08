@@ -35,9 +35,23 @@ spec:
           spec:
             description: CEosLabDeviceSpec defines the desired state of CEosLabDevice
             properties:
+              envvars:
+                additionalProperties:
+                  type: string
+                description: Environment variables
+                type: object
               hostname:
-                description: Device hostname
+                description: 'Default: CR name'
                 type: string
+              image:
+                description: 'Default: ceos:latest'
+                type: string
+              ports:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                description: 'Default: ssh:22, ssl:443, grpc:6030'
+                type: object
             type: object
           status:
             description: CEosLabDeviceStatus defines the observed state of CEosLabDevice
