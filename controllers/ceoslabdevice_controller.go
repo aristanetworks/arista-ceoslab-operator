@@ -343,6 +343,7 @@ func getPorts(device *ceoslabv1alpha1.CEosLabDevice) []corev1.ContainerPort {
 		ports = append(ports, corev1.ContainerPort{
 			Name:          service,
 			ContainerPort: port,
+			Protocol:      "TCP",
 		})
 	}
 	return ports
