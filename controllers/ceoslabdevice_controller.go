@@ -66,6 +66,9 @@ func (r *CEosLabDeviceReconciler) updateDeviceSuccess(ctx context.Context, devic
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/finalizers,verbs=update
 
+// We need permission to access deployments, see https://github.com/operator-framework/operator-sdk/issues/4059
+//+kubebuilder:rbac:groups=core,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by

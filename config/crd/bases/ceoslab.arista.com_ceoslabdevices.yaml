@@ -50,7 +50,7 @@ spec:
                 additionalProperties:
                   format: int32
                   type: integer
-                description: 'Default: ssh:22, ssl:443, grpc:6030'
+                description: 'Default: ssh:22, ssl:443, gnmi:6030'
                 type: object
             type: object
           status:
