@@ -41,16 +41,16 @@ spec:
                 description: Environment variables
                 type: object
               hostname:
-                description: 'Default: CR name'
+                description: 'Default: Resource name'
                 type: string
               image:
                 description: 'Default: ceos:latest'
                 type: string
               ports:
                 additionalProperties:
-                  format: int32
-                  type: integer
-                description: 'Default: ssh:22, ssl:443, gnmi:6030'
+                  type: string
+                description: 'Default: ssh="22:TCP", ssl="443:TCP", gnmi="6030:TCP".
+                  Syntax: <port>:<TCP|UDP|TCP,UDP>'
                 type: object
             type: object
           status:

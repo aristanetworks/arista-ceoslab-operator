@@ -21,6 +21,8 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -67,7 +69,7 @@ func (r *CEosLabDeviceReconciler) updateDeviceSuccess(ctx context.Context, devic
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/finalizers,verbs=update
 
 // We need permission to access deployments, see https://github.com/operator-framework/operator-sdk/issues/4059
-//+kubebuilder:rbac:groups=core,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -102,14 +104,21 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	err = r.Get(ctx, types.NamespacedName{Name: device.Name, Namespace: device.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new deployment
-		dep := r.getDeployment(device)
 		msg := fmt.Sprintf("Creating deployment for CEosLabDevice %s", device.Name)
 		log.Info(msg)
-		err = r.Create(ctx, dep)
-		if err != nil {
+		doDeploymentError := func(err error) {
 			errMsg := fmt.Sprintf("Failed to create deployment for CEosLabDevice %s", device.Name)
 			log.Error(err, errMsg)
 			r.updateDeviceFail(ctx, device, errMsg)
+		}
+		dep, err := r.getDeployment(device)
+		if err != nil {
+			doDeploymentError(err)
+			return ctrl.Result{}, err
+		}
+		err = r.Create(ctx, dep)
+		if err != nil {
+			doDeploymentError(err)
 			return ctrl.Result{}, err
 		}
 		// Deployment created successfully - return and requeue
@@ -164,10 +173,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Ensure the deployment environment variables are the same as the spec
 	container := &deploymentContainers[0]
 	envVarsMap := getEnvVarsMap(device)
-	containerEnvVars := map[string]string{}
-	for _, envvar := range container.Env {
-		containerEnvVars[envvar.Name] = envvar.Value
-	}
+	containerEnvVars := getEnvVarsMapFromCorev1(container.Env)
 	if !reflect.DeepEqual(envVarsMap, containerEnvVars) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment environment variables, new: %v, old: %v",
 			device.Name, envVarsMap, containerEnvVars)
@@ -199,14 +205,20 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Ensure the deployment ports are the same as the spec
-	specPorts := getPorts(device)
-	containerPorts := container.Ports
+	specPorts, err := getPortsMap(device)
+	if err != nil {
+		errMsg := "Failed to get CEosLabDevicePorts"
+		log.Error(err, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
+		return ctrl.Result{}, err
+	}
+	containerPorts := getPortsMapFromCorev1(container.Ports)
 	if !reflect.DeepEqual(specPorts, containerPorts) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment ports, new %v, old; %v",
 			device.Name, specPorts, containerPorts)
 		log.Info(msg)
 		// Update deployment
-		container.Ports = specPorts
+		container.Ports = getPortsCore(specPorts)
 		r.Update(ctx, found)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
@@ -227,13 +239,17 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabDevice) *appsv1.Deployment {
+func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabDevice) (*appsv1.Deployment, error) {
 	labels := getLabels(device)
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsCore(envVarsMap)
 	command := getEnvVarsCommand(envVarsMap)
 	image := getImage(device)
-	ports := getPorts(device)
+	portMap, err := getPortsMap(device)
+	if err != nil {
+		return nil, err
+	}
+	ports := getPortsCore(portMap)
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      device.Name,
@@ -260,7 +276,7 @@ func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabD
 		},
 	}
 	ctrl.SetControllerReference(device, dep, r.Scheme)
-	return dep
+	return dep, nil
 }
 
 func getEnvVarsMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
@@ -298,6 +314,14 @@ func getEnvVarsCore(envVarsMap map[string]string) []corev1.EnvVar {
 	return envVars
 }
 
+func getEnvVarsMapFromCorev1(envVarsCore []corev1.EnvVar) map[string]string {
+	envVars := map[string]string{}
+	for _, envvar := range envVarsCore {
+		envVars[envvar.Name] = envvar.Value
+	}
+	return envVars
+}
+
 func getEnvVarsCommand(envVarsMap map[string]string) []string {
 	command := []string{"/sbin/init"}
 	for varname, val := range envVarsMap {
@@ -327,24 +351,79 @@ func getImage(device *ceoslabv1alpha1.CEosLabDevice) string {
 	return image
 }
 
-func getPorts(device *ceoslabv1alpha1.CEosLabDevice) []corev1.ContainerPort {
-	portMap := map[string]int32{
+type devicePortSpec struct {
+	port     int32
+	protocol corev1.Protocol
+}
+
+var protocolStringToCorev1 = map[string]corev1.Protocol{
+	"TCP": corev1.ProtocolTCP,
+	"UDP": corev1.ProtocolUDP,
+}
+
+func getPortsMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]devicePortSpec, error) {
+	portMap := map[string]string{
 		// Defaults
-		"ssh":  22,
-		"ssl":  443,
-		"gnmi": 6030,
+		"ssh":  "22:TCP",
+		"ssl":  "443:TCP",
+		"gnmi": "6030:TCP",
 	}
-	for service, port := range device.Spec.Ports {
+	for service, portSpecStr := range device.Spec.Ports {
 		// Extra ports, possibly overriding defaults
-		portMap[service] = port
+		portMap[service] = portSpecStr
 	}
+	devicePortSpecMap := map[string]devicePortSpec{}
+	for service, portSpecStr := range portMap {
+		errMsg := fmt.Sprintf("Unknown port spec %s, expected \"<port num>:<TCP|UDP>,...\"", portSpecStr)
+		splits := strings.Split(portSpecStr, ":")
+		if len(splits) != 2 {
+			return nil, stderrors.New(errMsg)
+		}
+		// ex. splits := [ "123", "TCP,UDP" ]
+		port, err := strconv.Atoi(splits[0])
+		if err != nil {
+			return nil, stderrors.New(errMsg)
+		}
+		protocols := strings.Split(splits[1], ",")
+		if len(protocols) == 0 {
+			return nil, stderrors.New(errMsg)
+		}
+		for _, protocol := range protocols {
+			corev1Protocol, ok := protocolStringToCorev1[protocol]
+			if !ok {
+				return nil, stderrors.New(errMsg)
+			}
+			// The core port type only allows one protocol per port, so mangle the name
+			// of the service so we can define multiple ports per service in the spec
+			// and not encounter a name collision.
+			devicePortSpecMap[service+protocol] = devicePortSpec{
+				port:     int32(port),
+				protocol: corev1Protocol,
+			}
+		}
+	}
+	return devicePortSpecMap, nil
+}
+
+func getPortsCore(portMap map[string]devicePortSpec) []corev1.ContainerPort {
 	ports := []corev1.ContainerPort{}
-	for service, port := range portMap {
+	for serviceProtocol, portSpec := range portMap {
 		ports = append(ports, corev1.ContainerPort{
-			Name:          service,
-			ContainerPort: port,
-			Protocol:      "TCP",
+			Name:          serviceProtocol, // ex. gnmiTCP
+			ContainerPort: portSpec.port,
+			Protocol:      portSpec.protocol,
 		})
 	}
 	return ports
+}
+
+func getPortsMapFromCorev1(ports []corev1.ContainerPort) map[string]devicePortSpec {
+	devicePortSpecMap := map[string]devicePortSpec{}
+	for _, port := range ports {
+		devicePortSpecMap[port.Name] = devicePortSpec{
+			port:     port.ContainerPort,
+			protocol: port.Protocol,
+		}
+	}
+	return devicePortSpecMap
 }

@@ -96,7 +96,7 @@ func (in *CEosLabDeviceSpec) DeepCopyInto(out *CEosLabDeviceSpec) {
 	}
 	if in.Ports != nil {
 		in, out := &in.Ports, &out.Ports
-		*out = make(map[string]int32, len(*in))
+		*out = make(map[string]string, len(*in))
 		for key, val := range *in {
 			(*out)[key] = val
 		}
