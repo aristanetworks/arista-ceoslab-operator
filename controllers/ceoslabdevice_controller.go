@@ -270,6 +270,8 @@ func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabD
 						Command: command,
 						Env:     env,
 						Ports:   ports,
+						// Run container in privileged mode
+						SecurityContext: getSecurityContext(),
 					}},
 				},
 			},
@@ -277,6 +279,12 @@ func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabD
 	}
 	ctrl.SetControllerReference(device, dep, r.Scheme)
 	return dep, nil
+}
+
+func getSecurityContext() *corev1.SecurityContext {
+	// Yes, I know.
+	privileged := true
+	return &corev1.SecurityContext{Privileged: &privileged}
 }
 
 func getEnvVarsMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
@@ -396,7 +404,9 @@ func getPortsMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]devicePortSp
 			// The core port type only allows one protocol per port, so mangle the name
 			// of the service so we can define multiple ports per service in the spec
 			// and not encounter a name collision.
-			devicePortSpecMap[service+protocol] = devicePortSpec{
+			// K8s requires port service names to be lowercase.
+			serviceProtocol := strings.ToLower(service + protocol)
+			devicePortSpecMap[serviceProtocol] = devicePortSpec{
 				port:     int32(port),
 				protocol: corev1Protocol,
 			}
@@ -409,7 +419,7 @@ func getPortsCore(portMap map[string]devicePortSpec) []corev1.ContainerPort {
 	ports := []corev1.ContainerPort{}
 	for serviceProtocol, portSpec := range portMap {
 		ports = append(ports, corev1.ContainerPort{
-			Name:          serviceProtocol, // ex. gnmiTCP
+			Name:          serviceProtocol, // ex. gnmitcp
 			ContainerPort: portSpec.port,
 			Protocol:      portSpec.protocol,
 		})
