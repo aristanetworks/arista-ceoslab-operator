@@ -28,14 +28,10 @@ type CEosLabDeviceSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Default: Resource name
-	Hostname string `json:"hostname,omitempty"`
 	// Environment variables
 	EnvVar map[string]string `json:"envvars,omitempty"`
 	// Default: ceos:latest
 	Image string `json:"image,omitempty"`
-	// Default: ssh="22:TCP", ssl="443:TCP", gnmi="6030:TCP". Syntax: <port>:<TCP|UDP|TCP,UDP>
-	Ports map[string]string `json:"ports,omitempty"`
 }
 
 // CEosLabDeviceStatus defines the observed state of CEosLabDevice
