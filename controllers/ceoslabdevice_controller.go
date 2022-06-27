@@ -39,6 +39,27 @@ import (
 	"k8s.io/utils/pointer"
 )
 
+const (
+	FAILED_STATE = "failed"
+	INPROGRESS_STATE = "reconciling"
+	SUCCESS_STATE = "success"
+
+	INIT_CONTAINER_IMAGE = "networkop/init-wait:latest"
+	CEOS_COMMAND = "/sbin/init"
+	DEFAULT_CEOS_IMAGE = "ceos:latest"
+)
+
+var (
+	defaultEnvVars = map[string]string{
+		"CEOS":                                "1",
+		"EOS_PLATFORM":                        "ceoslab",
+		"container":                           "docker",
+		"ETBA":                                "1",
+		"SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT": "1",
+		"INTFTYPE":                            "eth",
+	}
+)
+
 // CEosLabDeviceReconciler reconciles a CEosLabDevice object
 type CEosLabDeviceReconciler struct {
 	client.Client
@@ -47,19 +68,19 @@ type CEosLabDeviceReconciler struct {
 
 // Helpers for updating status
 func (r *CEosLabDeviceReconciler) updateDeviceFail(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice, errMsg string) {
-	device.Status.State = "failed"
+	device.Status.State = FAILED_STATE
 	device.Status.Reason = errMsg
 	r.Update(ctx, device)
 }
 
 func (r *CEosLabDeviceReconciler) updateDeviceReconciling(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice, msg string) {
-	device.Status.State = "reconciling"
+	device.Status.State = INPROGRESS_STATE
 	device.Status.Reason = msg
 	r.Update(ctx, device)
 }
 
 func (r *CEosLabDeviceReconciler) updateDeviceSuccess(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice) {
-	device.Status.State = "success"
+	device.Status.State = SUCCESS_STATE
 	device.Status.Reason = ""
 	r.Update(ctx, device)
 }
@@ -132,13 +153,23 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// Ensure we have only a single container configured for this deployment
+	// Ensure we have only a single container (and init container) configured for this deployment
 	deploymentContainers := found.Spec.Template.Spec.Containers
+	deploymentInitContainers := found.Spec.Template.Spec.InitContainers
 	numContainers := len(deploymentContainers)
+	numInitContainers := len(deploymentInitContainers)
 	if numContainers != 1 {
 		errMsg := fmt.Sprintf("Deployment for CEosLabDevice %s has %d containers instead of 1",
 			device.Name, numContainers)
 		err := stderrors.New("Too many containers")
+		log.Error(err, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
+		return ctrl.Result{}, err
+	}
+	if numInitContainers != 1 {
+		errMsg := fmt.Sprintf("Deployment for CEosLabDevice %s has %d init containers instead of 1",
+			device.Name, numInitContainers)
+		err := stderrors.New("Too many init containers")
 		log.Error(err, errMsg)
 		r.updateDeviceFail(ctx, device, errMsg)
 		return ctrl.Result{}, err
@@ -180,7 +211,9 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Info(msg)
 		// Update deployment
 		env := getEnvVarsCore(device, envVarsMap)
+		args := getArgs(device, envVarsMap)
 		container.Env = env
+		container.Args = args
 		r.Update(ctx, found)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
@@ -196,6 +229,37 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Info(msg)
 		// Update deployment
 		container.Image = specImage
+		r.Update(ctx, found)
+		// Update status
+		r.updateDeviceReconciling(ctx, device, msg)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	// Ensure the deployment args are the same as the spec
+	specArgs := getArgs(device, envVarsMap)
+	containerArgs := container.Args
+	if !reflect.DeepEqual(specArgs, containerArgs) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment arguments, new: %v, old: %v",
+			device.Name, specArgs, containerArgs)
+		log.Info(msg)
+		// Update deployment
+		container.Args = specArgs
+		r.Update(ctx, found)
+		// Update status
+		r.updateDeviceReconciling(ctx, device, msg)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	// Ensure the deployment init container args are correct.
+	initContainer := &deploymentInitContainers[0]
+	specInitContainerArgs := getInitContainerArgs(device)
+	deploymentInitContainerArgs := initContainer.Args
+	if !reflect.DeepEqual(specInitContainerArgs, deploymentInitContainerArgs) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment init container arguments, new: %s, old: %s",
+			device.Name, specInitContainerArgs, deploymentInitContainerArgs)
+		log.Info(msg)
+		// Update deployment
+		initContainer.Args = specInitContainerArgs
 		r.Update(ctx, found)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
@@ -238,6 +302,15 @@ func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabD
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{{
+						Name:  fmt.Sprintf("init-%s", device.Name),
+						Image: INIT_CONTAINER_IMAGE,
+						Args: []string{
+							fmt.Sprintf("%d", device.Spec.NumInterfaces+1),
+							fmt.Sprintf("%d", device.Spec.Sleep),
+						},
+						ImagePullPolicy: "IfNotPresent",
+					}},
 					Containers: []corev1.Container{{
 						Image:   image,
 						Name:    "ceos",
@@ -260,14 +333,9 @@ func getSecurityContext() *corev1.SecurityContext {
 }
 
 func getEnvVarsMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
-	envVars := map[string]string{
-		// Default values
-		"CEOS":                                "1",
-		"EOS_PLATFORM":                        "ceoslab",
-		"container":                           "docker",
-		"ETBA":                                "1",
-		"SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT": "1",
-		"INTFTYPE":                            "eth",
+	envVars := map[string]string{}
+	for k, v := range defaultEnvVars {
+		envVars[k] = v
 	}
 	for varname, val := range device.Spec.EnvVar {
 		// Add new environment variables, possibly overriding defaults
@@ -296,7 +364,7 @@ func getEnvVarsMapFromCorev1(envVarsCore []corev1.EnvVar) map[string]string {
 }
 
 func getCommand(device *ceoslabv1alpha1.CEosLabDevice) []string {
-	command := []string{"/sbin/init"}
+	command := []string{CEOS_COMMAND}
 	return command
 }
 
@@ -314,9 +382,9 @@ func getLabels(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
 }
 
 func getImage(device *ceoslabv1alpha1.CEosLabDevice) string {
-	image := device.Spec.Image
-	if image == "" {
-		image = "ceos:latest"
+	image := DEFAULT_CEOS_IMAGE
+	if specImage := device.Spec.Image; specImage != "" {
+		image = specImage
 	}
 	return image
 }
@@ -325,6 +393,17 @@ func getArgs(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]string
 	args := []string{}
 	for varname, val := range envVarsMap {
 		args = append(args, "systemd.setenv="+varname+"="+val)
+	}
+	for _, arg := range device.Spec.Args {
+		args = append(args, arg)
+	}
+	return args
+}
+
+func getInitContainerArgs(device *ceoslabv1alpha1.CEosLabDevice) []string {
+	args := []string{
+		fmt.Sprintf("%d", device.Spec.NumInterfaces+1),
+		fmt.Sprintf("%d", device.Spec.Sleep),
 	}
 	return args
 }

@@ -94,12 +94,10 @@ func (in *CEosLabDeviceSpec) DeepCopyInto(out *CEosLabDeviceSpec) {
 			(*out)[key] = val
 		}
 	}
-	if in.Ports != nil {
-		in, out := &in.Ports, &out.Ports
-		*out = make(map[string]string, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
+	if in.Args != nil {
+		in, out := &in.Args, &out.Args
+		*out = make([]string, len(*in))
+		copy(*out, *in)
 	}
 }
 

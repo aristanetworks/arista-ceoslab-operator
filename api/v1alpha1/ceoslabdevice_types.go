@@ -32,6 +32,12 @@ type CEosLabDeviceSpec struct {
 	EnvVar map[string]string `json:"envvars,omitempty"`
 	// Default: ceos:latest
 	Image string `json:"image,omitempty"`
+	// Number of meshnet interfaces
+	NumInterfaces int32 `json:"numinterfaces,omitempty"`
+	// Extra arguments to pass to /sbin/init
+	Args []string `json:"args,omitempty"`
+	// Sleep time before starting ceoslab device
+	Sleep int32 `json:"sleep,omitempty"`
 }
 
 // CEosLabDeviceStatus defines the observed state of CEosLabDevice
