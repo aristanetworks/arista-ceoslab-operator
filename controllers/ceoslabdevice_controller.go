@@ -211,7 +211,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Info(msg)
 		// Update deployment
 		env := getEnvVarsCore(device, envVarsMap)
-		args := getArgs(device, envVarsMap)
+		args := getArgsCore(getArgsMap(device, envVarsMap))
 		container.Env = env
 		container.Args = args
 		r.Update(ctx, found)
@@ -236,14 +236,15 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Ensure the deployment args are the same as the spec
-	specArgs := getArgs(device, envVarsMap)
-	containerArgs := container.Args
+	specArgs := getArgsMap(device, envVarsMap)
+	containerArgs := getContainerArgsMapFromCorev1(container.Args)
 	if !reflect.DeepEqual(specArgs, containerArgs) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment arguments, new: %v, old: %v",
 			device.Name, specArgs, containerArgs)
 		log.Info(msg)
 		// Update deployment
-		container.Args = specArgs
+		args := getArgsCore(specArgs)
+		container.Args = args
 		r.Update(ctx, found)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
@@ -285,7 +286,8 @@ func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabD
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsCore(device, envVarsMap)
 	command := getCommand(device)
-	args := getArgs(device, envVarsMap)
+	argsMap := getArgsMap(device, envVarsMap)
+	args := getArgsCore(argsMap)
 	image := getImage(device)
 	securityContext := getSecurityContext()
 	dep := &appsv1.Deployment{
@@ -389,12 +391,28 @@ func getImage(device *ceoslabv1alpha1.CEosLabDevice) string {
 	return image
 }
 
-func getArgs(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]string) []string {
-	args := []string{}
+func getArgsMap(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]string) map[string]struct{} {
+	args := map[string]struct{}{}
 	for varname, val := range envVarsMap {
-		args = append(args, "systemd.setenv="+varname+"="+val)
+		args["systemd.setenv="+varname+"="+val] = struct{}{}
 	}
 	for _, arg := range device.Spec.Args {
+		args[arg] = struct{}{}
+	}
+	return args
+}
+
+func getContainerArgsMapFromCorev1(containerArgs []string) map[string]struct{} {
+	args := map[string]struct{}{}
+	for _, arg := range containerArgs {
+		args[arg] = struct{}{}
+	}
+	return args;
+}
+
+func getArgsCore(argsMap map[string]struct{}) []string {
+	args := []string{}
+	for arg := range argsMap {
 		args = append(args, arg)
 	}
 	return args
