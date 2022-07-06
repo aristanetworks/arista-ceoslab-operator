@@ -40,13 +40,13 @@ import (
 )
 
 const (
-	FAILED_STATE = "failed"
+	FAILED_STATE     = "failed"
 	INPROGRESS_STATE = "reconciling"
-	SUCCESS_STATE = "success"
+	SUCCESS_STATE    = "success"
 
 	INIT_CONTAINER_IMAGE = "networkop/init-wait:latest"
-	CEOS_COMMAND = "/sbin/init"
-	DEFAULT_CEOS_IMAGE = "ceos:latest"
+	CEOS_COMMAND         = "/sbin/init"
+	DEFAULT_CEOS_IMAGE   = "ceos:latest"
 )
 
 var (
@@ -407,7 +407,7 @@ func getContainerArgsMapFromCorev1(containerArgs []string) map[string]struct{} {
 	for _, arg := range containerArgs {
 		args[arg] = struct{}{}
 	}
-	return args;
+	return args
 }
 
 func getArgsCore(argsMap map[string]struct{}) []string {
