@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -30,7 +29,6 @@ import (
 
 	ceoslabv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,8 +87,8 @@ func (r *CEosLabDeviceReconciler) updateDeviceSuccess(ctx context.Context, devic
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/finalizers,verbs=update
 
-// We need permission to access deployments, see https://github.com/operator-framework/operator-sdk/issues/4059
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// We need permission to access pods, see https://github.com/operator-framework/operator-sdk/issues/4059
+//+kubebuilder:rbac:groups=apps,resources=pods,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -120,98 +118,65 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// Check if the deployment for this device already exists, if not create a new one
-	found := &appsv1.Deployment{}
+	// Check if the pod for this device already exists, if not create a new one
+	found := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Name: device.Name, Namespace: device.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
-		// Define a new deployment
-		msg := fmt.Sprintf("Creating deployment for CEosLabDevice %s", device.Name)
+		// Define a new pod
+		msg := fmt.Sprintf("Creating pod for CEosLabDevice %s", device.Name)
 		log.Info(msg)
-		doDeploymentError := func(err error) {
-			errMsg := fmt.Sprintf("Failed to create deployment for CEosLabDevice %s", device.Name)
+		doPodError := func(err error) {
+			errMsg := fmt.Sprintf("Failed to create pod for CEosLabDevice %s", device.Name)
 			log.Error(err, errMsg)
 			r.updateDeviceFail(ctx, device, errMsg)
 		}
-		dep, err := r.getDeployment(device)
+		dep, err := r.getPod(device)
 		if err != nil {
-			doDeploymentError(err)
+			doPodError(err)
 			return ctrl.Result{}, err
 		}
 		err = r.Create(ctx, dep)
 		if err != nil {
-			doDeploymentError(err)
+			doPodError(err)
 			return ctrl.Result{}, err
 		}
-		// Deployment created successfully - return and requeue
-		log.Info(fmt.Sprintf("Created deployment for CEosLabDevice %s: %v", device.Name, dep))
+		// Pod created successfully - return and requeue
+		log.Info(fmt.Sprintf("Created pod for CEosLabDevice %s: %v", device.Name, dep))
 		r.updateDeviceReconciling(ctx, device, msg)
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
-		errMsg := fmt.Sprintf("Failed to get deployment for CEosLabDevice %s", device.Name)
+		errMsg := fmt.Sprintf("Failed to get pod for CEosLabDevice %s", device.Name)
 		log.Error(err, errMsg)
 		r.updateDeviceFail(ctx, device, errMsg)
 		return ctrl.Result{}, err
 	}
 
-	// Ensure we have only a single container (and init container) configured for this deployment
-	deploymentContainers := found.Spec.Template.Spec.Containers
-	deploymentInitContainers := found.Spec.Template.Spec.InitContainers
-	numContainers := len(deploymentContainers)
-	numInitContainers := len(deploymentInitContainers)
-	if numContainers != 1 {
-		errMsg := fmt.Sprintf("Deployment for CEosLabDevice %s has %d containers instead of 1",
-			device.Name, numContainers)
-		err := stderrors.New("Too many containers")
-		log.Error(err, errMsg)
-		r.updateDeviceFail(ctx, device, errMsg)
-		return ctrl.Result{}, err
-	}
-	if numInitContainers != 1 {
-		errMsg := fmt.Sprintf("Deployment for CEosLabDevice %s has %d init containers instead of 1",
-			device.Name, numInitContainers)
-		err := stderrors.New("Too many init containers")
-		log.Error(err, errMsg)
-		r.updateDeviceFail(ctx, device, errMsg)
-		return ctrl.Result{}, err
-	}
-
-	// Ensure the deployment labels are the same as the metadata
+	// Ensure the pod labels are the same as the metadata
 	labels := getLabels(device)
-	// deploymentMatchLabels and deploymentTemplateLabels should be identical.
-	deploymentMatchLabels := found.Spec.Selector.MatchLabels
-	deploymentTemplateLabels := found.Spec.Template.Labels
-	if !reflect.DeepEqual(deploymentMatchLabels, deploymentTemplateLabels) {
-		errMsg := fmt.Sprintf("Deployment for CEosLabDevice %s template and match labels not equal, template: %v, match: %v",
-			device.Name, deploymentTemplateLabels, deploymentMatchLabels)
-		err := stderrors.New("Label mismatch")
-		log.Error(err, errMsg)
-		r.updateDeviceFail(ctx, device, errMsg)
-		return ctrl.Result{}, err
-	}
-	if !reflect.DeepEqual(labels, deploymentMatchLabels) {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment labels, new: %v, old: %v",
-			device.Name, labels, deploymentMatchLabels)
+	podLabels := found.ObjectMeta.Labels
+	if !reflect.DeepEqual(labels, podLabels) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod labels, new: %v, old: %v",
+			device.Name, labels, podLabels)
 		log.Info(msg)
-		// Update deployment
-		found.Spec.Selector.MatchLabels = labels
-		found.Spec.Template.Labels = labels
+		// Update pod
+		found.ObjectMeta.Labels = labels
 		r.Update(ctx, found)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Ensure the deployment environment variables are the same as the spec
-	container := &deploymentContainers[0]
+	// Ensure the pod environment variables are the same as the spec
+	container := found.Spec.Containers[0]
 	envVarsMap := getEnvVarsMap(device)
 	containerEnvVars := getEnvVarsMapFromCorev1(container.Env)
 	if !reflect.DeepEqual(envVarsMap, containerEnvVars) {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment environment variables, new: %v, old: %v",
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod environment variables, new: %v, old: %v",
 			device.Name, envVarsMap, containerEnvVars)
 		log.Info(msg)
-		// Update deployment
+		// Update pod
 		env := getEnvVarsCore(device, envVarsMap)
-		args := getArgsCore(getArgsMap(device, envVarsMap))
+		args := strMapToSlice(getArgsMap(device, envVarsMap))
 		container.Env = env
 		container.Args = args
 		r.Update(ctx, found)
@@ -220,14 +185,14 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Ensure the deployment image is the same as the spec
+	// Ensure the pod image is the same as the spec
 	specImage := getImage(device)
 	containerImage := container.Image
 	if specImage != containerImage {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment image, new: %s, old: %s",
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod image, new: %s, old: %s",
 			device.Name, specImage, containerImage)
 		log.Info(msg)
-		// Update deployment
+		// Update pod
 		container.Image = specImage
 		r.Update(ctx, found)
 		// Update status
@@ -235,15 +200,15 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Ensure the deployment args are the same as the spec
+	// Ensure the pod args are the same as the spec
 	specArgs := getArgsMap(device, envVarsMap)
-	containerArgs := getContainerArgsMapFromCorev1(container.Args)
+	containerArgs := strSliceToMap(container.Args)
 	if !reflect.DeepEqual(specArgs, containerArgs) {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment arguments, new: %v, old: %v",
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod arguments, new: %v, old: %v",
 			device.Name, specArgs, containerArgs)
 		log.Info(msg)
-		// Update deployment
-		args := getArgsCore(specArgs)
+		// Update pod
+		args := strMapToSlice(specArgs)
 		container.Args = args
 		r.Update(ctx, found)
 		// Update status
@@ -251,16 +216,16 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Ensure the deployment init container args are correct.
-	initContainer := &deploymentInitContainers[0]
-	specInitContainerArgs := getInitContainerArgs(device)
-	deploymentInitContainerArgs := initContainer.Args
-	if !reflect.DeepEqual(specInitContainerArgs, deploymentInitContainerArgs) {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s deployment init container arguments, new: %s, old: %s",
-			device.Name, specInitContainerArgs, deploymentInitContainerArgs)
+	// Ensure the pod init container args are correct.
+	initContainer := found.Spec.InitContainers[0]
+	specInitContainerArgs := strSliceToMap(getInitContainerArgs(device))
+	podInitContainerArgs := strSliceToMap(initContainer.Args)
+	if !reflect.DeepEqual(specInitContainerArgs, podInitContainerArgs) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod init container arguments, new: %s, old: %s",
+			device.Name, specInitContainerArgs, podInitContainerArgs)
 		log.Info(msg)
-		// Update deployment
-		initContainer.Args = specInitContainerArgs
+		// Update pod
+		initContainer.Args = strMapToSlice(specInitContainerArgs)
 		r.Update(ctx, found)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
@@ -277,57 +242,47 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ceoslabv1alpha1.CEosLabDevice{}).
-		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Pod{}).
 		Complete(r)
 }
 
-func (r *CEosLabDeviceReconciler) getDeployment(device *ceoslabv1alpha1.CEosLabDevice) (*appsv1.Deployment, error) {
+func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.Pod, error) {
 	labels := getLabels(device)
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsCore(device, envVarsMap)
 	command := getCommand(device)
-	argsMap := getArgsMap(device, envVarsMap)
-	args := getArgsCore(argsMap)
+	args := strMapToSlice(getArgsMap(device, envVarsMap))
 	image := getImage(device)
 	securityContext := getSecurityContext()
-	dep := &appsv1.Deployment{
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      device.Name,
 			Namespace: device.Namespace,
+			Labels:    labels,
 		},
-		Spec: appsv1.DeploymentSpec{
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{
+				Name:  fmt.Sprintf("init-%s", device.Name),
+				Image: INIT_CONTAINER_IMAGE,
+				Args: []string{
+					fmt.Sprintf("%d", device.Spec.NumInterfaces+1),
+					fmt.Sprintf("%d", device.Spec.Sleep),
 				},
-				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{{
-						Name:  fmt.Sprintf("init-%s", device.Name),
-						Image: INIT_CONTAINER_IMAGE,
-						Args: []string{
-							fmt.Sprintf("%d", device.Spec.NumInterfaces+1),
-							fmt.Sprintf("%d", device.Spec.Sleep),
-						},
-						ImagePullPolicy: "IfNotPresent",
-					}},
-					Containers: []corev1.Container{{
-						Image:   image,
-						Name:    "ceos",
-						Command: command,
-						Args:    args,
-						Env:     env,
-						// Run container in privileged mode
-						SecurityContext: securityContext,
-					}},
-				},
-			},
+				ImagePullPolicy: "IfNotPresent",
+			}},
+			Containers: []corev1.Container{{
+				Image:   image,
+				Name:    "ceos",
+				Command: command,
+				Args:    args,
+				Env:     env,
+				// Run container in privileged mode
+				SecurityContext: securityContext,
+			}},
 		},
 	}
-	ctrl.SetControllerReference(device, dep, r.Scheme)
-	return dep, nil
+	ctrl.SetControllerReference(device, pod, r.Scheme)
+	return pod, nil
 }
 
 func getSecurityContext() *corev1.SecurityContext {
@@ -374,6 +329,7 @@ func getLabels(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
 	labels := map[string]string{
 		// Defaults
 		"app":  "ceoslabdevice",
+		"topo": device.Namespace,
 		"name": device.Name,
 	}
 	for label, value := range device.Labels {
@@ -402,20 +358,20 @@ func getArgsMap(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]str
 	return args
 }
 
-func getContainerArgsMapFromCorev1(containerArgs []string) map[string]struct{} {
-	args := map[string]struct{}{}
-	for _, arg := range containerArgs {
-		args[arg] = struct{}{}
+func strSliceToMap(slice []string) map[string]struct{} {
+	strMap := map[string]struct{}{}
+	for _, str := range slice {
+		strMap[str] = struct{}{}
 	}
-	return args
+	return strMap
 }
 
-func getArgsCore(argsMap map[string]struct{}) []string {
-	args := []string{}
-	for arg := range argsMap {
-		args = append(args, arg)
+func strMapToSlice(strMap map[string]struct{}) []string {
+	slice := []string{}
+	for str := range strMap {
+		slice = append(slice, str)
 	}
-	return args
+	return slice
 }
 
 func getInitContainerArgs(device *ceoslabv1alpha1.CEosLabDevice) []string {
