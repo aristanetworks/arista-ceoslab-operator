@@ -328,9 +328,8 @@ func getCommand(device *ceoslabv1alpha1.CEosLabDevice) []string {
 func getLabels(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
 	labels := map[string]string{
 		// Defaults
-		"app":  "ceoslabdevice",
+		"app":  device.Name,
 		"topo": device.Namespace,
-		"name": device.Name,
 	}
 	for label, value := range device.Labels {
 		// Extra labels attached to CR, such as model, version, and OS
