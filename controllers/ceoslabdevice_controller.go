@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -81,6 +82,12 @@ func (r *CEosLabDeviceReconciler) updateDeviceSuccess(ctx context.Context, devic
 	device.Status.State = SUCCESS_STATE
 	device.Status.Reason = ""
 	r.Update(ctx, device)
+}
+
+func (r *CEosLabDeviceReconciler) restartPod(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice, msg string) {
+	r.Delete(ctx, device)
+	r.updateDeviceReconciling(ctx, device, msg)
+	return
 }
 
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices,verbs=get;list;watch;create;update;patch;delete
@@ -174,14 +181,9 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod environment variables, new: %v, old: %v",
 			device.Name, envVarsMap, containerEnvVars)
 		log.Info(msg)
-		// Update pod
-		env := getEnvVarsCore(device, envVarsMap)
-		args := strMapToSlice(getArgsMap(device, envVarsMap))
-		container.Env = env
-		container.Args = args
-		r.Update(ctx, found)
-		// Update status
-		r.updateDeviceReconciling(ctx, device, msg)
+		// Environment variables can only be changed by restarting the pod
+		// Delete the pod, and requeue to recreate
+		r.restartPod(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -192,11 +194,28 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod image, new: %s, old: %s",
 			device.Name, specImage, containerImage)
 		log.Info(msg)
-		// Update pod
-		container.Image = specImage
-		r.Update(ctx, found)
-		// Update status
-		r.updateDeviceReconciling(ctx, device, msg)
+		// Image can only be changed by restarting the pod
+		// Delete the pod, and requeue to recreate
+		r.restartPod(ctx, device, msg)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	// Ensure the pod resource requirements are same as the spec
+	specResourceRequirements, err := getResourceRequirements(device)
+	containerResourceRequirements := container.Resources
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to validate pod resource requirements, new: %v, old: %v",
+			device.Spec.Resources, containerResourceRequirements)
+		log.Error(err, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
+	}
+	if !reflect.DeepEqual(*specResourceRequirements, containerResourceRequirements) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod resource requirements, new: %v, old: %v",
+			device.Name, specResourceRequirements, containerResourceRequirements)
+		log.Info(msg)
+		// Resource requirements can only be changed by restarting the pod
+		// Delete the pod, and requeue to recreate
+		r.restartPod(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -208,11 +227,9 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			device.Name, specArgs, containerArgs)
 		log.Info(msg)
 		// Update pod
-		args := strMapToSlice(specArgs)
-		container.Args = args
-		r.Update(ctx, found)
-		// Update status
-		r.updateDeviceReconciling(ctx, device, msg)
+		// Pod args can only be changed by restarting the pod
+		// Delete the pod, and requeue to recreate
+		r.restartPod(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -224,11 +241,9 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod init container arguments, new: %s, old: %s",
 			device.Name, specInitContainerArgs, podInitContainerArgs)
 		log.Info(msg)
-		// Update pod
-		initContainer.Args = strMapToSlice(specInitContainerArgs)
-		r.Update(ctx, found)
-		// Update status
-		r.updateDeviceReconciling(ctx, device, msg)
+		// Init container args can only be changed by reconciling
+		// Delete the pod, and requeue to recreate
+		r.restartPod(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -254,6 +269,10 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 	args := strMapToSlice(getArgsMap(device, envVarsMap))
 	image := getImage(device)
 	securityContext := getSecurityContext()
+	resourceReqs, err := getResourceRequirements(device)
+	if err != nil {
+		return nil, err
+	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      device.Name,
@@ -271,14 +290,35 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 				ImagePullPolicy: "IfNotPresent",
 			}},
 			Containers: []corev1.Container{{
-				Image:   image,
-				Name:    "ceos",
-				Command: command,
-				Args:    args,
-				Env:     env,
+				Image:           image,
+				Name:            "ceos",
+				Command:         command,
+				Args:            args,
+				Env:             env,
+				Resources:       *resourceReqs,
+				ImagePullPolicy: "IfNotPresent",
 				// Run container in privileged mode
 				SecurityContext: securityContext,
 			}},
+			TerminationGracePeriodSeconds: pointer.Int64(0),
+			NodeSelector:                  map[string]string{},
+			Affinity: &corev1.Affinity{
+				PodAntiAffinity: &corev1.PodAntiAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
+						Weight: 100,
+						PodAffinityTerm: corev1.PodAffinityTerm{
+							LabelSelector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{{
+									Key:      "topo",
+									Operator: "In",
+									Values:   []string{device.Name},
+								}},
+							},
+							TopologyKey: "kubernetes.io/hostname",
+						},
+					}},
+				},
+			},
 		},
 	}
 	ctrl.SetControllerReference(device, pod, r.Scheme)
@@ -379,4 +419,31 @@ func getInitContainerArgs(device *ceoslabv1alpha1.CEosLabDevice) []string {
 		fmt.Sprintf("%d", device.Spec.Sleep),
 	}
 	return args
+}
+
+func getResourceRequirements(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.ResourceRequirements, error) {
+	// This could panic but I don't want to. Just state the failure and end reconciliation.
+	// I don't think anything is sanitizing this input.
+	parsed := true
+	defer func() {
+		if r := recover(); r != nil {
+			parsed = false
+		}
+	}()
+	r := &corev1.ResourceRequirements{
+		Requests: map[corev1.ResourceName]resource.Quantity{},
+	}
+	resourceSpec := device.Spec.Resources
+	if v, ok := resourceSpec["cpu"]; ok {
+		// Panicky
+		r.Requests["cpu"] = resource.MustParse(v)
+	}
+	if v, ok := resourceSpec["memory"]; ok {
+		// Panicky
+		r.Requests["memory"] = resource.MustParse(v)
+	}
+	if parsed {
+		return r, nil
+	}
+	return nil, fmt.Errorf("Could not parse resource requirements: %v", resourceSpec)
 }

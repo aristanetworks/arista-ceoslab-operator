@@ -28,15 +28,19 @@ type CEosLabDeviceSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Environment variables
+	// Additional environment variables. Those necessary to boot properly are already present.
 	EnvVar map[string]string `json:"envvars,omitempty"`
-	// Default: ceos:latest
+	// Image name. Default: ceos:latest
 	Image string `json:"image,omitempty"`
-	// Number of meshnet interfaces
-	NumInterfaces int32 `json:"numinterfaces,omitempty"`
-	// Extra arguments to pass to /sbin/init
+	// Additional arguments to pass to /sbin/init.  Those necessary to boot properly are already present.
 	Args []string `json:"args,omitempty"`
-	// Sleep time before starting ceoslab device
+	// Resource requirements/constraints
+	Resources map[string]string `json:"resourcerequirements.omitempty"`
+	// Port mappings for container services. Default: ssh="22:TCP", ssl="443:TCP", gnmi="6030:TCP". Syntax: <port>:<TCP|UDP|TCP,UDP>
+	Services map[string]string `json:"services.omitempty"`
+	// Number of data interfaces to create. An additional interface (eth0) is created for pod connectivity.
+	NumInterfaces int32 `json:"numinterfaces,omitempty"`
+	// Sleep time before starting ceoslab device. Default: 0
 	Sleep int32 `json:"sleep,omitempty"`
 }
 
