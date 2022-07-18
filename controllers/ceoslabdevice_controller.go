@@ -262,27 +262,6 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Ensure services are the same as the spec
-	specServiceMap, err := getServiceMap(device)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod services, new: %v, old: %v",
-			device.Name, device.Spec.Services, foundServices)
-		log.Error(err, errMsg)
-		r.updateDeviceFail(ctx, device, errMsg)
-	}
-	containerServiceMap := getServiceMapFromCorev1(foundServices)
-	if !reflect.DeepEqual(specServiceMap, containerServiceMap) {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old; %v",
-			device.Name, specServiceMap, containerServiceMap)
-		log.Info(msg)
-		// Update pod
-		foundServices.Spec.Ports = getServicePortsCore(specServiceMap)
-		r.Update(ctx, foundServices)
-		// Update status
-		r.updateDeviceReconciling(ctx, device, msg)
-		return ctrl.Result{RequeueAfter: time.Second}, nil
-	}
-
 	// Ensure the pod args are the same as the spec
 	specArgs := getArgsMap(device, envVarsMap)
 	containerArgs := strSliceToMap(container.Args)
@@ -311,6 +290,27 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
+	// Ensure services are the same as the spec
+	specServiceMap, err := getServiceMap(device)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod services, new: %v, old: %v",
+			device.Name, device.Spec.Services, foundServices)
+		log.Error(err, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
+	}
+	containerServiceMap := getServiceMapFromCorev1(foundServices)
+	if !reflect.DeepEqual(specServiceMap, containerServiceMap) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old; %v",
+			device.Name, specServiceMap, containerServiceMap)
+		log.Info(msg)
+		// Update pod
+		foundServices.Spec.Ports = getServicePortsCore(specServiceMap)
+		r.Update(ctx, foundServices)
+		// Update status
+		r.updateDeviceReconciling(ctx, device, msg)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
 	// Device reconciled
 	log.Info(fmt.Sprintf("CEosLabDevice %s reconciled", device.Name))
 	r.updateDeviceSuccess(ctx, device)
@@ -324,6 +324,8 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Pod{}).
 		Complete(r)
 }
+
+// Reconciliation helpers
 
 func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.Pod, error) {
 	labels := getLabels(device)
