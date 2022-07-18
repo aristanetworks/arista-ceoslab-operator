@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -56,6 +58,11 @@ var (
 		"ETBA":                                "1",
 		"SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT": "1",
 		"INTFTYPE":                            "eth",
+	}
+	defaultServices = map[string]string{
+		"ssh":  "22:TCP",
+		"ssl":  "443:TCP",
+		"gnmi": "6030:TCP",
 	}
 )
 
@@ -94,8 +101,8 @@ func (r *CEosLabDeviceReconciler) restartPod(ctx context.Context, device *ceosla
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ceoslab.arista.com,resources=ceoslabdevices/finalizers,verbs=update
 
-// We need permission to access pods, see https://github.com/operator-framework/operator-sdk/issues/4059
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -126,8 +133,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Check if the pod for this device already exists, if not create a new one
-	found := &corev1.Pod{}
-	err = r.Get(ctx, types.NamespacedName{Name: device.Name, Namespace: device.Namespace}, found)
+	foundPod := &corev1.Pod{}
+	err = r.Get(ctx, types.NamespacedName{Name: device.Name, Namespace: device.Namespace}, foundPod)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new pod
 		msg := fmt.Sprintf("Creating pod for CEosLabDevice %s", device.Name)
@@ -137,18 +144,18 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Error(err, errMsg)
 			r.updateDeviceFail(ctx, device, errMsg)
 		}
-		dep, err := r.getPod(device)
+		newPod, err := r.getPod(device)
 		if err != nil {
 			doPodError(err)
 			return ctrl.Result{}, err
 		}
-		err = r.Create(ctx, dep)
+		err = r.Create(ctx, newPod)
 		if err != nil {
 			doPodError(err)
 			return ctrl.Result{}, err
 		}
 		// Pod created successfully - return and requeue
-		log.Info(fmt.Sprintf("Created pod for CEosLabDevice %s: %v", device.Name, dep))
+		log.Info(fmt.Sprintf("Created pod for CEosLabDevice %s: %v", device.Name, newPod))
 		r.updateDeviceReconciling(ctx, device, msg)
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
@@ -158,23 +165,59 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
+	// Check if pod services already exist, if not create new ones
+	foundServices := &corev1.Service{}
+	err = r.Get(ctx,
+		types.NamespacedName{
+			Name:      fmt.Sprintf("service-%s", device.Name),
+			Namespace: device.Namespace,
+		}, foundServices)
+	if err != nil && errors.IsNotFound(err) {
+		msg := fmt.Sprintf("Creating new services for CEosLabDevice %s", device.Name)
+		log.Info(msg)
+		doServiceError := func(err error) {
+			errMsg := fmt.Sprintf("Failed to create services for CEosLabDevice %s", device.Name)
+			log.Error(err, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
+		}
+		newService, err := r.getService(device)
+		if err != nil {
+			doServiceError(err)
+			return ctrl.Result{}, err
+		}
+		err = r.Create(ctx, newService)
+		if err != nil {
+			doServiceError(err)
+			return ctrl.Result{}, err
+		}
+		// Service create successfully - return and requeue
+		log.Info(fmt.Sprintf("Created service for CEosLabDevice %s: %v", device.Name, newService))
+		r.updateDeviceReconciling(ctx, device, msg)
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		errMsg := fmt.Sprintf("Failed to get pod services for CEosLabDevice %s", device.Name)
+		log.Error(err, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
+		return ctrl.Result{}, err
+	}
+
 	// Ensure the pod labels are the same as the metadata
 	labels := getLabels(device)
-	podLabels := found.ObjectMeta.Labels
+	podLabels := foundPod.ObjectMeta.Labels
 	if !reflect.DeepEqual(labels, podLabels) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod labels, new: %v, old: %v",
 			device.Name, labels, podLabels)
 		log.Info(msg)
 		// Update pod
-		found.ObjectMeta.Labels = labels
-		r.Update(ctx, found)
+		foundPod.ObjectMeta.Labels = labels
+		r.Update(ctx, foundPod)
 		// Update status
 		r.updateDeviceReconciling(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	// Ensure the pod environment variables are the same as the spec
-	container := found.Spec.Containers[0]
+	container := foundPod.Spec.Containers[0]
 	envVarsMap := getEnvVarsMap(device)
 	containerEnvVars := getEnvVarsMapFromCorev1(container.Env)
 	if !reflect.DeepEqual(envVarsMap, containerEnvVars) {
@@ -204,8 +247,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	specResourceRequirements, err := getResourceRequirements(device)
 	containerResourceRequirements := container.Resources
 	if err != nil {
-		errMsg := fmt.Sprintf("Failed to validate pod resource requirements, new: %v, old: %v",
-			device.Spec.Resources, containerResourceRequirements)
+		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod  requirements, new: %v, old: %v",
+			device.Name, device.Spec.Resources, containerResourceRequirements)
 		log.Error(err, errMsg)
 		r.updateDeviceFail(ctx, device, errMsg)
 	}
@@ -216,6 +259,27 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		// Resource requirements can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.restartPod(ctx, device, msg)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	// Ensure services are the same as the spec
+	specServiceMap, err := getServiceMap(device)
+	if err != nil {
+		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod services, new: %v, old: %v",
+			device.Name, device.Spec.Services, foundServices)
+		log.Error(err, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
+	}
+	containerServiceMap := getServiceMapFromCorev1(foundServices)
+	if !reflect.DeepEqual(specServiceMap, containerServiceMap) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old; %v",
+			device.Name, specServiceMap, containerServiceMap)
+		log.Info(msg)
+		// Update pod
+		foundServices.Spec.Ports = getServicePortsCore(specServiceMap)
+		r.Update(ctx, foundServices)
+		// Update status
+		r.updateDeviceReconciling(ctx, device, msg)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -234,7 +298,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Ensure the pod init container args are correct.
-	initContainer := found.Spec.InitContainers[0]
+	initContainer := foundPod.Spec.InitContainers[0]
 	specInitContainerArgs := strSliceToMap(getInitContainerArgs(device))
 	podInitContainerArgs := strSliceToMap(initContainer.Args)
 	if !reflect.DeepEqual(specInitContainerArgs, podInitContainerArgs) {
@@ -268,7 +332,6 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 	command := getCommand(device)
 	args := strMapToSlice(getArgsMap(device, envVarsMap))
 	image := getImage(device)
-	securityContext := getSecurityContext()
 	resourceReqs, err := getResourceRequirements(device)
 	if err != nil {
 		return nil, err
@@ -298,7 +361,7 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 				Resources:       *resourceReqs,
 				ImagePullPolicy: "IfNotPresent",
 				// Run container in privileged mode
-				SecurityContext: securityContext,
+				SecurityContext: &corev1.SecurityContext{Privileged: pointer.Bool(true)},
 			}},
 			TerminationGracePeriodSeconds: pointer.Int64(0),
 			NodeSelector:                  map[string]string{},
@@ -325,8 +388,32 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 	return pod, nil
 }
 
-func getSecurityContext() *corev1.SecurityContext {
-	return &corev1.SecurityContext{Privileged: pointer.Bool(true)}
+func (r *CEosLabDeviceReconciler) getService(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.Service, error) {
+	serviceMap, err := getServiceMap(device)
+	if err != nil {
+		return nil, err
+	}
+	servicePorts := getServicePortsCore(serviceMap)
+	service := &corev1.Service{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Service",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("service-%s", device.Name),
+			Labels: map[string]string{
+				"pod": device.Name,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: servicePorts,
+			Selector: map[string]string{
+				"app": device.Name,
+			},
+			Type: "LoadBalancer",
+		},
+	}
+	return service, nil
 }
 
 func getEnvVarsMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
@@ -446,4 +533,76 @@ func getResourceRequirements(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.Res
 		return r, nil
 	}
 	return nil, fmt.Errorf("Could not parse resource requirements: %v", resourceSpec)
+}
+
+type deviceServicePort struct {
+	port     int32
+	protocol corev1.Protocol
+}
+
+func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]deviceServicePort, error) {
+	serviceStrMap := map[string]string{}
+	for k, v := range defaultServices {
+		serviceStrMap[k] = v
+	}
+	for service, servicePortStr := range device.Spec.Services {
+		// Extra ports, possibly overriding defaults
+		serviceStrMap[service] = servicePortStr
+	}
+	serviceMap := map[string]deviceServicePort{}
+	for service, servicePortStr := range serviceStrMap {
+		// Parse service ports froms strings
+		errMsg := fmt.Sprintf("Unknown port spec %s, expected \"<port num>:<TCP|UDP>,...\"", servicePortStr)
+		splits := strings.Split(servicePortStr, ":")
+		if len(splits) != 2 {
+			return nil, fmt.Errorf(errMsg)
+		}
+		// ex. splits := [ "123", "TCP,UDP" ]
+		port, err := strconv.Atoi(splits[0])
+		if err != nil {
+			return nil, fmt.Errorf(errMsg)
+		}
+		protocols := strings.Split(splits[1], ",")
+		if len(protocols) == 0 {
+			return nil, fmt.Errorf(errMsg)
+		}
+		for _, protocol := range protocols {
+			corev1Protocol := corev1.Protocol(protocol)
+			if !(corev1Protocol == corev1.ProtocolTCP || corev1Protocol == corev1.ProtocolUDP) {
+				return nil, fmt.Errorf(errMsg)
+			}
+			// The core port type only defines one protocol per port, so mangle the service
+			// name with the protocol so we can have multiple w/o name collisions.
+			// This is probably just paranoia.
+			serviceMap[service+protocol] = deviceServicePort{
+				port:     int32(port),
+				protocol: corev1Protocol,
+			}
+		}
+	}
+	return serviceMap, nil
+}
+
+func getServiceMapFromCorev1(service *corev1.Service) map[string]deviceServicePort {
+	serviceMap := map[string]deviceServicePort{}
+	for _, v := range service.Spec.Ports {
+		serviceMap[v.Name] = deviceServicePort{
+			port:     v.Port,
+			protocol: v.Protocol,
+		}
+	}
+	return serviceMap
+}
+
+func getServicePortsCore(serviceMap map[string]deviceServicePort) []corev1.ServicePort {
+	ports := []corev1.ServicePort{}
+	for serviceName, servicePort := range serviceMap {
+		// serviceName is the service name concatenated with the protocol type
+		ports = append(ports, corev1.ServicePort{
+			Name:     serviceName,
+			Protocol: servicePort.protocol,
+			Port:     servicePort.port,
+		})
+	}
+	return ports
 }
