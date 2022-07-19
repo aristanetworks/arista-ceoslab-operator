@@ -403,6 +403,7 @@ func (r *CEosLabDeviceReconciler) getService(device *ceoslabv1alpha1.CEosLabDevi
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("service-%s", device.Name),
+			Namespace: device.Namespace,
 			Labels: map[string]string{
 				"pod": device.Name,
 			},
