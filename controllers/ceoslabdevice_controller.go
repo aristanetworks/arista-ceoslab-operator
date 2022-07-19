@@ -59,12 +59,6 @@ var (
 		"INTFTYPE":                            "eth",
 	}
 
-	defaultServices = map[string]string{
-		"ssh":  "22:TCP",
-		"ssl":  "443:TCP",
-		"gnmi": "6030:TCP",
-	}
-
 	requeue   = ctrl.Result{Requeue: true}
 	noRequeue = ctrl.Result{}
 )
@@ -558,16 +552,8 @@ type deviceServicePort struct {
 }
 
 func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]deviceServicePort, error) {
-	serviceStrMap := map[string]string{}
-	for k, v := range defaultServices {
-		serviceStrMap[k] = v
-	}
-	for service, servicePortStr := range device.Spec.Services {
-		// Extra ports, possibly overriding defaults
-		serviceStrMap[service] = servicePortStr
-	}
 	serviceMap := map[string]deviceServicePort{}
-	for service, servicePortStr := range serviceStrMap {
+	for service, servicePortStr := range device.Spec.Services {
 		// Parse service ports froms strings
 		errMsg := fmt.Sprintf("Unknown port spec %s, expected \"<port num>:<TCP|UDP>,...\"", servicePortStr)
 		splits := strings.Split(servicePortStr, ":")
