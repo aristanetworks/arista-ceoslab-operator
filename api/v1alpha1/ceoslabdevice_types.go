@@ -32,16 +32,45 @@ type CEosLabDeviceSpec struct {
 	EnvVar map[string]string `json:"envvars,omitempty"`
 	// Image name. Default: ceos:latest
 	Image string `json:"image,omitempty"`
-	// Additional arguments to pass to /sbin/init.  Those necessary to boot properly are already present.
+	// Additional arguments to pass to /sbin/init. Those necessary to boot properly are already present.
 	Args []string `json:"args,omitempty"`
-	// Resource requirements/constraints
-	Resources map[string]string `json:"resourcerequirements.omitempty"`
-	// Port mappings for container services. Default: ssh="22:TCP", ssl="443:TCP", gnmi="6030:TCP". Syntax: <port>:<TCP|UDP|TCP,UDP>
-	Services map[string]string `json:"services.omitempty"`
-	// Number of data interfaces to create. An additional interface (eth0) is created for pod connectivity.
+	// Resource requests to configure on the pod. Default: none
+	Resources map[string]string `json:"resourcerequirements,omitempty"`
+	// Port mappings for container services. Default: none
+	Services map[string]ServiceConfig `json:"services,omitempty"`
+	// Number of data interfaces to create. An additional interface (eth0) is created for pod connectivity. Default: 0 interfaces
 	NumInterfaces int32 `json:"numinterfaces,omitempty"`
-	// Sleep time before starting ceoslab device. Default: 0
+	// Time (in seconds) to wait before starting the device. Default: 0 seconds
 	Sleep int32 `json:"sleep,omitempty"`
+	// X.509 certificate configuration.
+	CertConfig CertConfig `json:"certconfig,omitempty"`
+	// Explicit interface mapping between kernel devices and interface names. If this is defined, any unmapped devices are ignored.
+	IntfMapping map[string]string `json:"intfmapping,omitempty"`
+	// EOS feature toggle overrides
+	ToggleOverrides map[string]bool `json:"toggleoverrides,omitempty"`
+}
+
+type ServiceConfig struct {
+	// TCP ports to forward to the pod.
+	TCPPorts []int32 `json:"tcpports,omitempty"`
+	// UDP ports to forward to the pod.
+	UDPPorts []int32 `json:"udpports,omitempty"`
+}
+
+type CertConfig struct {
+	// Configuration for self-signed certificates.
+	SelfSignedCerts []SelfSignedCertConfig `json:"selfsignedcerts,omitempty"`
+}
+
+type SelfSignedCertConfig struct {
+	// Certificate name on the node.
+	CertName string `json:"certname,omitempty"`
+	// Key name on the node.
+	KeyName string `json:"keyname,omitempty"`
+	// RSA keysize to use for key generation.
+	KeySize int32 `json:"keysize,omitempty"`
+	// Common name to set in the cert.
+	CommonName string `json:"commonname,omitempty"`
 }
 
 // CEosLabDeviceStatus defines the observed state of CEosLabDevice
@@ -53,6 +82,13 @@ type CEosLabDeviceStatus struct {
 	State string `json:"status,omitempty"`
 	// Reason for potential failure
 	Reason string `json:"reason,omitempty"`
+
+	// State that cannot be deduced from the running pod is duplicated here.
+
+	// X.509 certificate configuration
+	CertConfig CertConfig `json:"certconfig,omitempty"`
+	// Explicit interface mapping between kernel devices and interface names. If this is defined, any unmapped devices are ignored.
+	IntfMapping map[string]string `json:"intfmapping,omitempty"`
 }
 
 //+kubebuilder:object:root=true

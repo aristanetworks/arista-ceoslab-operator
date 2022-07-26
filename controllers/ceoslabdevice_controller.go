@@ -17,26 +17,34 @@ limitations under the License.
 package controllers
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"reflect"
-	"strconv"
+	"regexp"
 	"strings"
-
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"time"
 
 	ceoslabv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-
 	"k8s.io/utils/pointer"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -47,6 +55,8 @@ const (
 	INIT_CONTAINER_IMAGE = "networkop/init-wait:latest"
 	CEOS_COMMAND         = "/sbin/init"
 	DEFAULT_CEOS_IMAGE   = "ceos:latest"
+
+	FLASH_VOLUME = "mnt-flash-volume"
 )
 
 var (
@@ -59,8 +69,10 @@ var (
 		"INTFTYPE":                            "eth",
 	}
 
-	requeue   = ctrl.Result{Requeue: true}
-	noRequeue = ctrl.Result{}
+	requeue    = ctrl.Result{Requeue: true}
+	noRequeue  = ctrl.Result{}
+	ethIntfRe  = regexp.MustCompile(`^Ethernet(?:\d+)(?:/\d+)?(?:/\d+)?$`)
+	mgmtIntfRe = regexp.MustCompile(`^Management(?:\d+)(?:/\d+)?$`)
 )
 
 // CEosLabDeviceReconciler reconciles a CEosLabDevice object
@@ -100,6 +112,7 @@ func (r *CEosLabDeviceReconciler) updateDeviceReconcilingWithRestart(ctx context
 
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -129,6 +142,150 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return noRequeue, err
 	}
 
+	// Create configmaps for projected volumes
+	configMaps := []*corev1.ConfigMap{}
+	// Certificates
+	for _, certConfig := range device.Spec.CertConfig.SelfSignedCerts {
+		certConfigMap := &corev1.ConfigMap{}
+		configName := fmt.Sprintf("configmap-selfsigned-%s-%s-%s",
+			certConfig.CertName, certConfig.KeyName, device.Name)
+		err = r.Get(ctx, types.NamespacedName{Name: configName, Namespace: device.Namespace}, certConfigMap)
+		if err != nil && errors.IsNotFound(err) {
+			doConfigMapErr := func(err error) {
+				errMsg := fmt.Sprintf("Failed to create self-signed certificate for CEosLabDevice %s",
+					device.Name)
+				log.Error(err, errMsg)
+				r.updateDeviceFail(ctx, device, errMsg)
+			}
+			certPem, keyPem, err := getSelfSignedCert(&certConfig)
+			if err != nil {
+				doConfigMapErr(err)
+				return noRequeue, err
+			}
+			certConfigMap = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configName,
+					Namespace: device.Namespace,
+				},
+				BinaryData: map[string][]byte{
+					certConfig.CertName: certPem,
+					certConfig.KeyName:  keyPem,
+				},
+			}
+			err = r.Create(ctx, certConfigMap)
+			if err != nil {
+				doConfigMapErr(err)
+				return noRequeue, err
+			}
+		} else if err != nil {
+			errMsg := fmt.Sprintf("Failed to get configmap for self-signed certificate for CEosLabDevice %s",
+				device.Name)
+			log.Error(err, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
+			return noRequeue, err
+		}
+		configMaps = append(configMaps, certConfigMap)
+	}
+
+	// IntfMapping
+	if len(device.Spec.IntfMapping) > 0 {
+		intfMappingConfigMap := &corev1.ConfigMap{}
+		configName := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
+		err = r.Get(ctx, types.NamespacedName{Name: configName, Namespace: device.Namespace}, intfMappingConfigMap)
+		if err != nil && errors.IsNotFound(err) {
+			doConfigMapErr := func(err error) {
+				errMsg := fmt.Sprintf("Failed to create EOS interface mapping for CEosLabDevice %s",
+					device.Name)
+				log.Error(err, errMsg)
+				r.updateDeviceFail(ctx, device, errMsg)
+			}
+			intfMapping := jsonIntfMapping{
+				EthernetIntf:   map[string]string{},
+				ManagementIntf: map[string]string{},
+			}
+			for kernelDevice, eosInterface := range device.Spec.IntfMapping {
+				if ethIntfRe.MatchString(eosInterface) {
+					intfMapping.EthernetIntf[kernelDevice] = eosInterface
+				} else if mgmtIntfRe.MatchString(eosInterface) {
+					intfMapping.ManagementIntf[kernelDevice] = eosInterface
+				} else {
+					err := fmt.Errorf("Unrecognized EOS interface %s", eosInterface)
+					errMsg := fmt.Sprintf("Failed to create EOS interface mapping for CEosLabDevice %s",
+						device.Name)
+					log.Error(err, errMsg)
+					r.updateDeviceFail(ctx, device, errMsg)
+					return noRequeue, err
+				}
+			}
+			jsonIntfMapping, err := json.Marshal(intfMapping)
+			if err != nil {
+				doConfigMapErr(err)
+				return noRequeue, err
+			}
+			intfMappingConfigMap = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("configmap-intfmapping-%s", device.Name),
+					Namespace: device.Namespace,
+				},
+				BinaryData: map[string][]byte{
+					"EosIntfMapping.json": jsonIntfMapping,
+				},
+			}
+			err = r.Create(ctx, intfMappingConfigMap)
+			if err != nil {
+				doConfigMapErr(err)
+				return noRequeue, err
+			}
+		} else if err != nil {
+			errMsg := fmt.Sprintf("Failed to get configmap for interface mapping for CEosLabDevice %s",
+				device.Name)
+			log.Error(err, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
+			return noRequeue, err
+		}
+		configMaps = append(configMaps, intfMappingConfigMap)
+	}
+
+	// Toggle overrides
+	if len(device.Spec.ToggleOverrides) > 0 {
+		toggleOverrideConfigMap := &corev1.ConfigMap{}
+		configName := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
+		err = r.Get(ctx, types.NamespacedName{Name: configName, Namespace: device.Namespace}, toggleOverrideConfigMap)
+		if err != nil && errors.IsNotFound(err) {
+			buf := &bytes.Buffer{}
+			for toggle, enabled := range device.Spec.ToggleOverrides {
+				if enabled {
+					buf.Write([]byte(toggle + "=1\n"))
+				} else {
+					buf.Write([]byte(toggle + "=0\n"))
+				}
+			}
+			toggleOverrideConfigMap = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configName,
+					Namespace: device.Namespace,
+				},
+				BinaryData: map[string][]byte{
+					"toggle_override": buf.Bytes(),
+				},
+			}
+			err = r.Create(ctx, toggleOverrideConfigMap)
+			if err != nil {
+				errMsg := fmt.Sprintf("Failed to create EOS toggle override for CEosLabDevice %s",
+					device.Name)
+				log.Error(err, errMsg)
+				r.updateDeviceFail(ctx, device, errMsg)
+				return noRequeue, nil
+			}
+		} else if err != nil {
+			errMsg := fmt.Sprintf("Failed to get configmap for toggle overrides for CEosLabDevice %s",
+				device.Name)
+			log.Error(err, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
+			return noRequeue, err
+		}
+		configMaps = append(configMaps, toggleOverrideConfigMap)
+	}
 	// Check if the pod for this device already exists, if not create a new one
 	foundPod := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Name: device.Name, Namespace: device.Namespace}, foundPod)
@@ -141,7 +298,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Error(err, errMsg)
 			r.updateDeviceFail(ctx, device, errMsg)
 		}
-		newPod, err := r.getPod(device)
+		newPod, err := r.getPod(device, configMaps)
 		if err != nil {
 			doPodError(err)
 			return noRequeue, err
@@ -172,19 +329,12 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil && errors.IsNotFound(err) {
 		msg := fmt.Sprintf("Creating new services for CEosLabDevice %s", device.Name)
 		log.Info(msg)
-		doServiceError := func(err error) {
+		newService := r.getService(device)
+		err = r.Create(ctx, newService)
+		if err != nil {
 			errMsg := fmt.Sprintf("Failed to create services for CEosLabDevice %s", device.Name)
 			log.Error(err, errMsg)
 			r.updateDeviceFail(ctx, device, errMsg)
-		}
-		newService, err := r.getService(device)
-		if err != nil {
-			doServiceError(err)
-			return noRequeue, err
-		}
-		err = r.Create(ctx, newService)
-		if err != nil {
-			doServiceError(err)
 			return noRequeue, err
 		}
 		// Service create successfully - return and requeue
@@ -288,13 +438,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Ensure services are the same as the spec
-	specServiceMap, err := getServiceMap(device)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod services, new: %v, old: %v",
-			device.Name, device.Spec.Services, foundServices)
-		log.Error(err, errMsg)
-		r.updateDeviceFail(ctx, device, errMsg)
-	}
+	specServiceMap := getServiceMap(device)
 	containerServiceMap := getServiceMapFromCorev1(foundServices)
 	if !reflect.DeepEqual(specServiceMap, containerServiceMap) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old; %v",
@@ -325,7 +469,7 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // Reconciliation helpers
 
-func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.Pod, error) {
+func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice, configMaps []*corev1.ConfigMap) (*corev1.Pod, error) {
 	labels := getLabels(device)
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsCore(device, envVarsMap)
@@ -336,6 +480,8 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 	if err != nil {
 		return nil, err
 	}
+	volumes := getVolumes(configMaps)
+	volumeMounts := getVolumeMounts(configMaps)
 	resources := *getResourcesCore(resourceMap)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -363,6 +509,7 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 				ImagePullPolicy: "IfNotPresent",
 				// Run container in privileged mode
 				SecurityContext: &corev1.SecurityContext{Privileged: pointer.Bool(true)},
+				VolumeMounts:    volumeMounts,
 			}},
 			TerminationGracePeriodSeconds: pointer.Int64(0),
 			NodeSelector:                  map[string]string{},
@@ -383,17 +530,15 @@ func (r *CEosLabDeviceReconciler) getPod(device *ceoslabv1alpha1.CEosLabDevice) 
 					}},
 				},
 			},
+			Volumes: volumes,
 		},
 	}
 	ctrl.SetControllerReference(device, pod, r.Scheme)
 	return pod, nil
 }
 
-func (r *CEosLabDeviceReconciler) getService(device *ceoslabv1alpha1.CEosLabDevice) (*corev1.Service, error) {
-	serviceMap, err := getServiceMap(device)
-	if err != nil {
-		return nil, err
-	}
+func (r *CEosLabDeviceReconciler) getService(device *ceoslabv1alpha1.CEosLabDevice) *corev1.Service {
+	serviceMap := getServiceMap(device)
 	servicePorts := getServicePortsCore(serviceMap)
 	service := &corev1.Service{
 		TypeMeta: metav1.TypeMeta{
@@ -415,7 +560,7 @@ func (r *CEosLabDeviceReconciler) getService(device *ceoslabv1alpha1.CEosLabDevi
 			Type: "LoadBalancer",
 		},
 	}
-	return service, nil
+	return service
 }
 
 func getEnvVarsMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
@@ -552,39 +697,25 @@ type deviceServicePort struct {
 	protocol corev1.Protocol
 }
 
-func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]deviceServicePort, error) {
+func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]deviceServicePort {
 	serviceMap := map[string]deviceServicePort{}
-	for service, servicePortStr := range device.Spec.Services {
-		// Parse service ports froms strings
-		errMsg := fmt.Sprintf("Unknown port spec %s, expected \"<port num>:<TCP|UDP>,...\"", servicePortStr)
-		splits := strings.Split(servicePortStr, ":")
-		if len(splits) != 2 {
-			return nil, fmt.Errorf(errMsg)
-		}
-		// ex. splits := [ "123", "TCP,UDP" ]
-		port, err := strconv.Atoi(splits[0])
-		if err != nil {
-			return nil, fmt.Errorf(errMsg)
-		}
-		protocols := strings.Split(splits[1], ",")
-		if len(protocols) == 0 {
-			return nil, fmt.Errorf(errMsg)
-		}
-		for _, protocol := range protocols {
-			corev1Protocol := corev1.Protocol(protocol)
-			if !(corev1Protocol == corev1.ProtocolTCP || corev1Protocol == corev1.ProtocolUDP) {
-				return nil, fmt.Errorf(errMsg)
+	for service, serviceConfig := range device.Spec.Services {
+		for _, tcpPort := range serviceConfig.TCPPorts {
+			serviceName := strings.ToLower(fmt.Sprintf("%s%s%d", service, "TCP", tcpPort))
+			serviceMap[serviceName] = deviceServicePort{
+				port:     tcpPort,
+				protocol: "TCP",
 			}
-			// The core port type only defines one protocol per port, so mangle the service
-			// name with the protocol so we can have multiple w/o name collisions.
-			// This is probably just paranoia.
-			serviceMap[strings.ToLower(service+protocol)] = deviceServicePort{
-				port:     int32(port),
-				protocol: corev1Protocol,
+		}
+		for _, udpPort := range serviceConfig.UDPPorts {
+			serviceName := strings.ToLower(fmt.Sprintf("%s%s%d", service, "UDP", udpPort))
+			serviceMap[serviceName] = deviceServicePort{
+				port:     udpPort,
+				protocol: "UDP",
 			}
 		}
 	}
-	return serviceMap, nil
+	return serviceMap
 }
 
 func getServiceMapFromCorev1(service *corev1.Service) map[string]deviceServicePort {
@@ -609,4 +740,77 @@ func getServicePortsCore(serviceMap map[string]deviceServicePort) []corev1.Servi
 		})
 	}
 	return ports
+}
+
+func getSelfSignedCert(config *ceoslabv1alpha1.SelfSignedCertConfig) (certPem []byte, keyPem []byte, err error) {
+	key, err := rsa.GenerateKey(rand.Reader, int(config.KeySize))
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPem = pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	template := &x509.Certificate{
+		BasicConstraintsValid: true,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		Issuer: pkix.Name{
+			Organization: []string{"Arista Networks"},
+		},
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour * 24 * 365),
+	}
+	cert, err := x509.CreateCertificate(rand.Reader, template, template, key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPem = pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert,
+	})
+	return certPem, keyPem, nil
+}
+
+type jsonIntfMapping struct {
+	// Internal structure to marshal to JSON kernel device to interface mapping
+	EthernetIntf   map[string]string `json:"EthernetIntf,omitempty"`
+	ManagementIntf map[string]string `json:"ManagementIntf,omitempty"`
+}
+
+func getVolumes(configMaps []*corev1.ConfigMap) []corev1.Volume {
+	projections := []corev1.VolumeProjection{}
+	for _, configMap := range configMaps {
+		projections = append(projections, corev1.VolumeProjection{
+			ConfigMap: &corev1.ConfigMapProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMap.Name,
+				},
+			},
+		})
+	}
+	volumes := []corev1.Volume{{
+		Name: FLASH_VOLUME,
+		VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: projections,
+			},
+		},
+	}}
+	return volumes
+}
+
+func getVolumeMounts(configMaps []*corev1.ConfigMap) []corev1.VolumeMount {
+	mounts := []corev1.VolumeMount{}
+	for _, configMap := range configMaps {
+		for filename := range configMap.BinaryData {
+			mounts = append(mounts, corev1.VolumeMount{
+				Name:      FLASH_VOLUME,
+				MountPath: "/mnt/flash",
+				SubPath:   filename,
+			})
+		}
+	}
+	return mounts
 }
