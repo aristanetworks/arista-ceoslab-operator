@@ -203,12 +203,12 @@ func (in *ServiceConfig) DeepCopyInto(out *ServiceConfig) {
 	*out = *in
 	if in.TCPPorts != nil {
 		in, out := &in.TCPPorts, &out.TCPPorts
-		*out = make([]int32, len(*in))
+		*out = make([]uint32, len(*in))
 		copy(*out, *in)
 	}
 	if in.UDPPorts != nil {
 		in, out := &in.UDPPorts, &out.UDPPorts
-		*out = make([]int32, len(*in))
+		*out = make([]uint32, len(*in))
 		copy(*out, *in)
 	}
 }

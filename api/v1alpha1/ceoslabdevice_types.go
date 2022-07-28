@@ -39,9 +39,9 @@ type CEosLabDeviceSpec struct {
 	// Port mappings for container services. Default: none
 	Services map[string]ServiceConfig `json:"services,omitempty"`
 	// Number of data interfaces to create. An additional interface (eth0) is created for pod connectivity. Default: 0 interfaces
-	NumInterfaces int32 `json:"numinterfaces,omitempty"`
+	NumInterfaces uint32 `json:"numinterfaces,omitempty"`
 	// Time (in seconds) to wait before starting the device. Default: 0 seconds
-	Sleep int32 `json:"sleep,omitempty"`
+	Sleep uint32 `json:"sleep,omitempty"`
 	// X.509 certificate configuration.
 	CertConfig CertConfig `json:"certconfig,omitempty"`
 	// Explicit interface mapping between kernel devices and interface names. If this is defined, any unmapped devices are ignored.
@@ -52,9 +52,9 @@ type CEosLabDeviceSpec struct {
 
 type ServiceConfig struct {
 	// TCP ports to forward to the pod.
-	TCPPorts []int32 `json:"tcpports,omitempty"`
+	TCPPorts []uint32 `json:"tcpports,omitempty"`
 	// UDP ports to forward to the pod.
-	UDPPorts []int32 `json:"udpports,omitempty"`
+	UDPPorts []uint32 `json:"udpports,omitempty"`
 }
 
 type CertConfig struct {
@@ -68,7 +68,7 @@ type SelfSignedCertConfig struct {
 	// Key name on the node.
 	KeyName string `json:"keyname,omitempty"`
 	// RSA keysize to use for key generation.
-	KeySize int32 `json:"keysize,omitempty"`
+	KeySize uint32 `json:"keysize,omitempty"`
 	// Common name to set in the cert.
 	CommonName string `json:"commonname,omitempty"`
 }

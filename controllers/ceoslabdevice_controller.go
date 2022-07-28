@@ -55,8 +55,6 @@ const (
 	INIT_CONTAINER_IMAGE = "networkop/init-wait:latest"
 	CEOS_COMMAND         = "/sbin/init"
 	DEFAULT_CEOS_IMAGE   = "ceos:latest"
-
-	FLASH_VOLUME = "mnt-flash-volume"
 )
 
 var (
@@ -147,8 +145,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Certificates
 	for _, certConfig := range device.Spec.CertConfig.SelfSignedCerts {
 		certConfigMap := &corev1.ConfigMap{}
-		configName := fmt.Sprintf("configmap-selfsigned-%s-%s-%s",
-			certConfig.CertName, certConfig.KeyName, device.Name)
+		configName := strings.ToLower(fmt.Sprintf("configmap-selfsigned-%s-%s-%s",
+			certConfig.CertName, certConfig.KeyName, device.Name))
 		err = r.Get(ctx, types.NamespacedName{Name: configName, Namespace: device.Namespace}, certConfigMap)
 		if err != nil && errors.IsNotFound(err) {
 			doConfigMapErr := func(err error) {
@@ -190,7 +188,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// IntfMapping
 	if len(device.Spec.IntfMapping) > 0 {
 		intfMappingConfigMap := &corev1.ConfigMap{}
-		configName := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
+		configName := strings.ToLower(fmt.Sprintf("configmap-intfmapping-%s", device.Name))
 		err = r.Get(ctx, types.NamespacedName{Name: configName, Namespace: device.Namespace}, intfMappingConfigMap)
 		if err != nil && errors.IsNotFound(err) {
 			doConfigMapErr := func(err error) {
@@ -249,7 +247,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Toggle overrides
 	if len(device.Spec.ToggleOverrides) > 0 {
 		toggleOverrideConfigMap := &corev1.ConfigMap{}
-		configName := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
+		configName := strings.ToLower(fmt.Sprintf("configmap-toggle-override-%s", device.Name))
 		err = r.Get(ctx, types.NamespacedName{Name: configName, Namespace: device.Namespace}, toggleOverrideConfigMap)
 		if err != nil && errors.IsNotFound(err) {
 			buf := &bytes.Buffer{}
@@ -693,7 +691,7 @@ func getResourcesCore(resourceMap map[string]string) *corev1.ResourceRequirement
 }
 
 type deviceServicePort struct {
-	port     int32
+	port     uint32
 	protocol corev1.Protocol
 }
 
@@ -722,7 +720,7 @@ func getServiceMapFromCorev1(service *corev1.Service) map[string]deviceServicePo
 	serviceMap := map[string]deviceServicePort{}
 	for _, v := range service.Spec.Ports {
 		serviceMap[v.Name] = deviceServicePort{
-			port:     v.Port,
+			port:     uint32(v.Port),
 			protocol: v.Protocol,
 		}
 	}
@@ -736,7 +734,7 @@ func getServicePortsCore(serviceMap map[string]deviceServicePort) []corev1.Servi
 		ports = append(ports, corev1.ServicePort{
 			Name:     serviceName,
 			Protocol: servicePort.protocol,
-			Port:     servicePort.port,
+			Port:     int32(servicePort.port),
 		})
 	}
 	return ports
@@ -757,12 +755,13 @@ func getSelfSignedCert(config *ceoslabv1alpha1.SelfSignedCertConfig) (certPem []
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		Issuer: pkix.Name{
 			Organization: []string{"Arista Networks"},
+			CommonName:   config.CommonName,
 		},
 		SerialNumber: big.NewInt(1),
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(time.Hour * 24 * 365),
 	}
-	cert, err := x509.CreateCertificate(rand.Reader, template, template, key.PublicKey, key)
+	cert, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -780,24 +779,19 @@ type jsonIntfMapping struct {
 }
 
 func getVolumes(configMaps []*corev1.ConfigMap) []corev1.Volume {
-	projections := []corev1.VolumeProjection{}
+	volumes := []corev1.Volume{}
 	for _, configMap := range configMaps {
-		projections = append(projections, corev1.VolumeProjection{
-			ConfigMap: &corev1.ConfigMapProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: configMap.Name,
+		volumes = append(volumes, corev1.Volume{
+			Name: "volume-" + configMap.Name,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMap.Name,
+					},
 				},
 			},
 		})
 	}
-	volumes := []corev1.Volume{{
-		Name: FLASH_VOLUME,
-		VolumeSource: corev1.VolumeSource{
-			Projected: &corev1.ProjectedVolumeSource{
-				Sources: projections,
-			},
-		},
-	}}
 	return volumes
 }
 
@@ -806,8 +800,8 @@ func getVolumeMounts(configMaps []*corev1.ConfigMap) []corev1.VolumeMount {
 	for _, configMap := range configMaps {
 		for filename := range configMap.BinaryData {
 			mounts = append(mounts, corev1.VolumeMount{
-				Name:      FLASH_VOLUME,
-				MountPath: "/mnt/flash",
+				Name:      "mount-" + configMap.Name,
+				MountPath: "/mnt/flash/" + filename,
 				SubPath:   filename,
 			})
 		}
