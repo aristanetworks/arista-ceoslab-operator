@@ -83,12 +83,16 @@ type CEosLabDeviceStatus struct {
 	// Reason for potential failure
 	Reason string `json:"reason,omitempty"`
 
-	// State that cannot be deduced from the running pod is duplicated here.
+	// It's difficult to deduce the config maps' running state because the data is unstructured.
+	// For simplicity's sake we store the last configuration here. Other parameters are deduced
+	// via the K8s API.
 
 	// X.509 certificate configuration
 	CertConfig CertConfig `json:"certconfig,omitempty"`
 	// Explicit interface mapping between kernel devices and interface names. If this is defined, any unmapped devices are ignored.
 	IntfMapping map[string]string `json:"intfmapping,omitempty"`
+	// EOS feature toggle overrides
+	ToggleOverrides map[string]bool `json:"toggleoverrides,omitempty"`
 }
 
 //+kubebuilder:object:root=true

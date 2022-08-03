@@ -157,6 +157,11 @@ spec:
               status:
                 description: Device status
                 type: string
+              toggleoverrides:
+                additionalProperties:
+                  type: boolean
+                description: EOS feature toggle overrides
+                type: object
             type: object
         type: object
     served: true
