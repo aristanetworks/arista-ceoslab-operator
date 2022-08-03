@@ -117,6 +117,7 @@ func (r *CEosLabDeviceReconciler) updateDeviceReconcilingWithRestart(pod *corev1
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -149,6 +150,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// The error handling for creating and pushing k8s resources is very repetitive so it's
 	// been factored out. Requeue if we create any new objects to be certain we get them back.
+	isNewObject := false
 	haveNewObjects := false
 
 	// ConfigMaps and Secrets. Collect into a slice so later we can generate volumes from them.
@@ -165,12 +167,13 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			}
 			return secret, nil
 		}
-		object, isNewObject, err := r.getOrCreateObject(device, name, createObject)
+		secret := &corev1.Secret{}
+		isNewObject, err = r.getOrCreateObject(device, name, createObject, secret)
 		if err != nil {
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, object)
+		secretsAndConfigMaps = append(secretsAndConfigMaps, secret)
 	}
 
 	// Generate rc.eos to load certificates from /mnt/flash into ramfs
@@ -180,12 +183,13 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			configMap := getRcEos(device)
 			return configMap, nil
 		}
-		object, isNewObject, err := r.getOrCreateObject(device, name, createObject)
+		configMap := &corev1.ConfigMap{}
+		isNewObject, err = r.getOrCreateObject(device, name, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, object)
+		secretsAndConfigMaps = append(secretsAndConfigMaps, configMap)
 	}
 
 	// Explicit kernel device to EOS interface mapping
@@ -198,12 +202,13 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			}
 			return configMap, nil
 		}
-		object, isNewObject, err := r.getOrCreateObject(device, name, createObject)
+		configMap := &corev1.ConfigMap{}
+		isNewObject, err = r.getOrCreateObject(device, name, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, object)
+		secretsAndConfigMaps = append(secretsAndConfigMaps, configMap)
 	}
 
 	// Feature toggle overrides
@@ -213,12 +218,13 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			configMap := getToggleOverrides(device.Spec.ToggleOverrides)
 			return configMap, nil
 		}
-		object, isNewObject, err := r.getOrCreateObject(device, name, createObject)
+		configMap := &corev1.ConfigMap{}
+		isNewObject, err = r.getOrCreateObject(device, name, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, object)
+		secretsAndConfigMaps = append(secretsAndConfigMaps, configMap)
 	}
 
 	// Pods
@@ -226,12 +232,12 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	createPodObject := func() (client.Object, error) {
 		return r.getPod(device, secretsAndConfigMaps)
 	}
-	podObject, isNewObject, err := r.getOrCreateObject(device, device.Name, createPodObject)
+	devicePod := &corev1.Pod{}
+	isNewObject, err = r.getOrCreateObject(device, device.Name, createPodObject, devicePod)
 	if err != nil {
 		return noRequeue, err
 	}
 	haveNewObjects = haveNewObjects || isNewObject
-	devicePod := podObject.(*corev1.Pod)
 
 	// Services
 
@@ -239,12 +245,12 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	getServiceObject := func() (client.Object, error) {
 		return r.getService(device), nil
 	}
-	serviceObject, isNewObject, err := r.getOrCreateObject(device, serviceName, getServiceObject)
+	deviceService := &corev1.Service{}
+	isNewObject, err = r.getOrCreateObject(device, serviceName, getServiceObject, deviceService)
 	if err != nil {
 		return noRequeue, err
 	}
 	haveNewObjects = haveNewObjects || isNewObject
-	deviceService := serviceObject.(*corev1.Service)
 
 	if haveNewObjects {
 		// We created new objects. As a sanity test, requeue to make sure we pick them back up.
@@ -379,9 +385,8 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 type makeObjectFn func() (client.Object, error)
 
-func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEosLabDevice, name string, makeObject makeObjectFn) (client.Object, bool, error) {
+func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEosLabDevice, name string, makeObject makeObjectFn, object client.Object) (bool, error) {
 	isNewObject := false
-	var object client.Object
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: device.Namespace}, object)
 	if err != nil && errors.IsNotFound(err) {
 		// Create new k8s object
@@ -396,14 +401,14 @@ func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEos
 		object, err = makeObject()
 		if err != nil {
 			doCreateObjectError()
-			return nil, false, err
+			return false, err
 		}
 		object.SetName(name)
 		object.SetNamespace(device.Namespace)
 		err = r.Create(ctx, object)
 		if err != nil {
 			doCreateObjectError()
-			return nil, false, err
+			return false, err
 		}
 		log.Info(fmt.Sprintf("Created %s for CEosLabDevice %s", name, device.Name))
 		isNewObject = true
@@ -411,9 +416,9 @@ func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEos
 		errMsg := fmt.Sprintf("Failed to get %s for CEosLabDevice %s", name, device.Name)
 		log.Error(err, errMsg)
 		r.updateDeviceFail(device, errMsg)
-		return nil, false, err
+		return false, err
 	}
-	return object, isNewObject, nil
+	return isNewObject, nil
 }
 
 // ConfigMaps and Secrets
