@@ -157,7 +157,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	secretsAndConfigMaps := []client.Object{}
 
 	// Certificates
-	for i, certConfig := range device.Spec.CertConfig.SelfSignedCerts {
+	selfSignedCerts := device.Spec.CertConfig.SelfSignedCerts
+	for i, certConfig := range selfSignedCerts {
 		name := fmt.Sprintf("secret-selfsigned-%s-%d", device.Name, i)
 		createObject := func(object client.Object) error {
 			err := getSelfSignedCert(object.(*corev1.Secret), certConfig)
@@ -176,10 +177,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Generate rc.eos to load certificates from /mnt/flash into in-memory filesystem
-	if len(device.Spec.CertConfig.SelfSignedCerts) > 0 {
+	if len(selfSignedCerts) > 0 {
 		name := fmt.Sprintf("configmap-rceos-%s", device.Name)
 		createObject := func(object client.Object) error {
-			getRcEos(object.(*corev1.ConfigMap), device)
+			getRcEos(object.(*corev1.ConfigMap), selfSignedCerts)
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
@@ -192,10 +193,11 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Explicit kernel device to EOS interface mapping
-	if len(device.Spec.IntfMapping) > 0 {
+	intfMapping := device.Spec.IntfMapping
+	if len(intfMapping) > 0 {
 		name := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
 		createObject := func(object client.Object) error {
-			return getJsonIntfMapping(object.(*corev1.ConfigMap), device.Spec.IntfMapping)
+			return getJsonIntfMapping(object.(*corev1.ConfigMap), intfMapping)
 		}
 		configMap := &corev1.ConfigMap{}
 		isNewObject, err = r.getOrCreateObject(device, name, createObject, configMap)
@@ -207,10 +209,11 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Feature toggle overrides
-	if len(device.Spec.ToggleOverrides) > 0 {
+	toggleOverrides := device.Spec.ToggleOverrides
+	if len(toggleOverrides) > 0 {
 		name := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
 		createObject := func(object client.Object) error {
-			getToggleOverrides(object.(*corev1.ConfigMap), device.Spec.ToggleOverrides)
+			getToggleOverrides(object.(*corev1.ConfigMap), toggleOverrides)
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
@@ -225,7 +228,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// Pods
 
 	createPodObject := func(object client.Object) error {
-		return r.getPod(object.(*corev1.Pod), device, secretsAndConfigMaps)
+		return getPod(object.(*corev1.Pod), device, secretsAndConfigMaps)
 	}
 	devicePod := &corev1.Pod{}
 	isNewObject, err = r.getOrCreateObject(device, device.Name, createPodObject, devicePod)
@@ -238,7 +241,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	serviceName := fmt.Sprintf("service-%s", device.Name)
 	getServiceObject := func(object client.Object) error {
-		r.getService(object.(*corev1.Service), device)
+		getService(object.(*corev1.Service), device)
 		return nil
 	}
 	deviceService := &corev1.Service{}
@@ -374,6 +377,8 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&ceoslabv1alpha1.CEosLabDevice{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.Secret{}).
 		Complete(r)
 }
 
@@ -401,6 +406,7 @@ func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEos
 		}
 		object.SetName(name)
 		object.SetNamespace(device.Namespace)
+		ctrl.SetControllerReference(device, object, r.Scheme)
 		err = r.Create(ctx, object)
 		if err != nil {
 			doCreateObjectError()
@@ -455,7 +461,7 @@ func getSelfSignedCert(secret *corev1.Secret, config ceoslabv1alpha1.SelfSignedC
 	return nil
 }
 
-func getRcEos(configMap *corev1.ConfigMap, device *ceoslabv1alpha1.CEosLabDevice) {
+func getRcEos(configMap *corev1.ConfigMap, configs []ceoslabv1alpha1.SelfSignedCertConfig) {
 	// Generate file to run at boot. It waits for agents to be warm and then
 	// copies certificates to an in-memory filesystem. The `Cli -c` command expects
 	// literal carriage returns. Sample output:
@@ -475,7 +481,7 @@ func getRcEos(configMap *corev1.ConfigMap, device *ceoslabv1alpha1.CEosLabDevice
 	writeLn("{")
 	writeLn("wfw")
 	writeLn("Cli -Ac 'enable")
-	for _, certConfig := range device.Spec.CertConfig.SelfSignedCerts {
+	for _, certConfig := range configs {
 		writeLn(fmt.Sprintf("copy file:/mnt/flash/%s certificate:%s",
 			certConfig.CertName, certConfig.CertName))
 		writeLn(fmt.Sprintf("copy file:/mnt/flash/%s sslkey:%s",
@@ -535,7 +541,7 @@ func getToggleOverrides(configMap *corev1.ConfigMap, toggleOverrides map[string]
 
 // Pods
 
-func (r *CEosLabDeviceReconciler) getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndConfigMaps []client.Object) error {
+func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndConfigMaps []client.Object) error {
 	labels := getLabels(device)
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsAPI(device, envVarsMap)
@@ -605,7 +611,6 @@ func (r *CEosLabDeviceReconciler) getPod(pod *corev1.Pod, device *ceoslabv1alpha
 		},
 		Volumes: volumes,
 	}
-	ctrl.SetControllerReference(device, pod, r.Scheme)
 	return nil
 }
 
@@ -810,7 +815,7 @@ func getVolumeMounts(secretsAndConfigMaps []client.Object) []corev1.VolumeMount 
 
 // Services
 
-func (r *CEosLabDeviceReconciler) getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) {
+func getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) {
 	serviceMap := getServiceMap(device)
 	servicePorts := getServicePortsAPI(serviceMap)
 	service.ObjectMeta.Labels = map[string]string{"pod": device.Name}
