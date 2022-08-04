@@ -85,14 +85,11 @@ type CEosLabDeviceStatus struct {
 
 	// It's difficult to deduce the config maps' running state because the data is unstructured.
 	// For simplicity's sake we store the last configuration here. Other parameters are deduced
-	// via the K8s API.
+	// via the K8s API. Keyed by keyed by configmap/secret name.
 
-	// X.509 certificate configuration
-	CertConfig CertConfig `json:"certconfig,omitempty"`
-	// Explicit interface mapping between kernel devices and interface names. If this is defined, any unmapped devices are ignored.
-	IntfMapping map[string]string `json:"intfmapping,omitempty"`
-	// EOS feature toggle overrides
-	ToggleOverrides map[string]bool `json:"toggleoverrides,omitempty"`
+	SelfSignedCertStatus  map[string]SelfSignedCertConfig `json:"selfsignedcertstatus,omitempty"`
+	IntfMappingStatus     map[string]map[string]string    `json:"intfmappingstatus,omitempty"`
+	ToggleOverridesStatus map[string]map[string]bool      `json:"toggleoverridesstatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

@@ -144,7 +144,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		return requeue, err
 	}
 
-	// Create or retrieve k8s objects associated with this CEosLabDevice, and validate their
+	// Create or retrieve k8s objects associated with this CEosLabDevice and validate their
 	// state. We create configmaps to mount a few files into the container, the pod itself,
 	// and possibly a set of services (if configured in the spec).
 
@@ -153,8 +153,12 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	isNewObject := false
 	haveNewObjects := false
 
-	// ConfigMaps and Secrets. Collect into a slice so later we can generate volumes from them.
-	secretsAndConfigMaps := []client.Object{}
+	// ConfigMaps and Secrets. Collect their config and status so we can reconcile them.
+	selfSignedCertConfig := map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
+	intfMappingConfig := map[string]map[string]string{}
+	toggleOverridesConfig := map[string]map[string]bool{}
+	// Also, collect into a map so we can generate volumes from them.
+	secretsAndConfigMaps := map[string]client.Object{}
 
 	// Certificates
 	selfSignedCerts := device.Spec.CertConfig.SelfSignedCerts
@@ -165,6 +169,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			if err != nil {
 				return err
 			}
+			if device.Status.SelfSignedCertStatus == nil {
+				device.Status.SelfSignedCertStatus = map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
+			}
+			device.Status.SelfSignedCertStatus[name] = certConfig
 			return nil
 		}
 		secret := &corev1.Secret{}
@@ -173,7 +181,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, secret)
+		secretsAndConfigMaps[name] = secret
+		selfSignedCertConfig[name] = certConfig
 	}
 
 	// Generate rc.eos to load certificates from /mnt/flash into in-memory filesystem
@@ -189,7 +198,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, configMap)
+		secretsAndConfigMaps[name] = configMap
 	}
 
 	// Explicit kernel device to EOS interface mapping
@@ -197,23 +206,14 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	if len(intfMapping) > 0 {
 		name := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
 		createObject := func(object client.Object) error {
-			return getJsonIntfMapping(object.(*corev1.ConfigMap), intfMapping)
-		}
-		configMap := &corev1.ConfigMap{}
-		isNewObject, err = r.getOrCreateObject(device, name, createObject, configMap)
-		if err != nil {
-			return noRequeue, err
-		}
-		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, configMap)
-	}
-
-	// Feature toggle overrides
-	toggleOverrides := device.Spec.ToggleOverrides
-	if len(toggleOverrides) > 0 {
-		name := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
-		createObject := func(object client.Object) error {
-			getToggleOverrides(object.(*corev1.ConfigMap), toggleOverrides)
+			err := getJsonIntfMapping(object.(*corev1.ConfigMap), intfMapping)
+			if err != nil {
+				return err
+			}
+			if device.Status.IntfMappingStatus == nil {
+				device.Status.IntfMappingStatus = map[string]map[string]string{}
+			}
+			device.Status.IntfMappingStatus[name] = intfMapping
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
@@ -222,7 +222,30 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps = append(secretsAndConfigMaps, configMap)
+		secretsAndConfigMaps[name] = configMap
+		intfMappingConfig[name] = intfMapping
+	}
+
+	// Feature toggle overrides
+	toggleOverrides := device.Spec.ToggleOverrides
+	if len(toggleOverrides) > 0 {
+		name := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
+		createObject := func(object client.Object) error {
+			getToggleOverrides(object.(*corev1.ConfigMap), toggleOverrides)
+			if device.Status.ToggleOverridesStatus == nil {
+				device.Status.ToggleOverridesStatus = map[string]map[string]bool{}
+			}
+			device.Status.ToggleOverridesStatus[name] = toggleOverrides
+			return nil
+		}
+		configMap := &corev1.ConfigMap{}
+		isNewObject, err = r.getOrCreateObject(device, name, createObject, configMap)
+		if err != nil {
+			return noRequeue, err
+		}
+		haveNewObjects = haveNewObjects || isNewObject
+		secretsAndConfigMaps[name] = configMap
+		toggleOverridesConfig[name] = toggleOverrides
 	}
 
 	// Pods
@@ -260,6 +283,39 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Reconcile observed state against desired state
+	doUpdateConfigMap := func(name string) {
+		// We can't update configmaps without restarting the pod (at least, any
+		// changes won't meaningfully take affect). Delete the config map and the
+		// pod to restart.
+		msg := fmt.Sprintf("Updating configmap %s for CEosLabDevice %s", name, device.Name)
+		r.Delete(ctx, secretsAndConfigMaps[name])
+		r.updateDeviceReconcilingWithRestart(devicePod, device, msg)
+	}
+
+	// Validate configmaps and secret status against config
+	for name, certConfig := range selfSignedCertConfig {
+		certStatus := device.Status.SelfSignedCertStatus[name]
+		if certConfig != certStatus {
+			doUpdateConfigMap(name)
+			return requeue, nil
+		}
+	}
+
+	for name, intfMappingConfig := range intfMappingConfig {
+		intfMappingStatus := device.Status.IntfMappingStatus[name]
+		if !reflect.DeepEqual(intfMappingConfig, intfMappingStatus) {
+			doUpdateConfigMap(name)
+			return requeue, nil
+		}
+	}
+
+	for name, toggleOverridesConfig := range toggleOverridesConfig {
+		toggleOverridesStatus := device.Status.ToggleOverridesStatus[name]
+		if !reflect.DeepEqual(toggleOverridesConfig, toggleOverridesStatus) {
+			doUpdateConfigMap(name)
+			return requeue, nil
+		}
+	}
 
 	// Ensure the pod labels are the same as the metadata
 	labels := getLabels(device)
@@ -541,7 +597,7 @@ func getToggleOverrides(configMap *corev1.ConfigMap, toggleOverrides map[string]
 
 // Pods
 
-func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndConfigMaps []client.Object) error {
+func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndConfigMaps map[string]client.Object) error {
 	labels := getLabels(device)
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsAPI(device, envVarsMap)
@@ -747,9 +803,9 @@ func volumeName(configMapName string) string {
 	return "volume-" + configMapName
 }
 
-func getVolumes(secretsAndConfigMaps []client.Object) []corev1.Volume {
+func getVolumes(secretsAndConfigMaps map[string]client.Object) []corev1.Volume {
 	volumes := []corev1.Volume{}
-	for _, secretOrConfigMap := range secretsAndConfigMaps {
+	for name, secretOrConfigMap := range secretsAndConfigMaps {
 		var permissions *int32 = nil
 		if permsStr, ok := secretOrConfigMap.GetAnnotations()["permissions"]; ok {
 			// Permissions are represented in octal
@@ -766,7 +822,7 @@ func getVolumes(secretsAndConfigMaps []client.Object) []corev1.Volume {
 			volumeSource = corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: secretOrConfigMap.GetName(),
+						Name: name,
 					},
 				},
 			}
@@ -776,7 +832,7 @@ func getVolumes(secretsAndConfigMaps []client.Object) []corev1.Volume {
 		case *corev1.Secret:
 			volumeSource = corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: secretOrConfigMap.GetName(),
+					SecretName: name,
 				},
 			}
 			if permissions != nil {
@@ -784,7 +840,7 @@ func getVolumes(secretsAndConfigMaps []client.Object) []corev1.Volume {
 			}
 		}
 		volume := corev1.Volume{
-			Name:         volumeName(secretOrConfigMap.GetName()),
+			Name:         volumeName(name),
 			VolumeSource: volumeSource,
 		}
 		volumes = append(volumes, volume)
@@ -792,9 +848,9 @@ func getVolumes(secretsAndConfigMaps []client.Object) []corev1.Volume {
 	return volumes
 }
 
-func getVolumeMounts(secretsAndConfigMaps []client.Object) []corev1.VolumeMount {
+func getVolumeMounts(secretsAndConfigMaps map[string]client.Object) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{}
-	for _, secretOrConfigMap := range secretsAndConfigMaps {
+	for name, secretOrConfigMap := range secretsAndConfigMaps {
 		var data map[string][]byte
 		switch v := secretOrConfigMap.(type) {
 		case *corev1.ConfigMap:
@@ -804,7 +860,7 @@ func getVolumeMounts(secretsAndConfigMaps []client.Object) []corev1.VolumeMount 
 		}
 		for filename := range data {
 			mounts = append(mounts, corev1.VolumeMount{
-				Name:      volumeName(secretOrConfigMap.GetName()),
+				Name:      volumeName(name),
 				MountPath: "/mnt/flash/" + filename,
 				SubPath:   filename,
 			})

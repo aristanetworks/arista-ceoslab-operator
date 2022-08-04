@@ -122,45 +122,41 @@ spec:
           status:
             description: CEosLabDeviceStatus defines the observed state of CEosLabDevice
             properties:
-              certconfig:
-                description: X.509 certificate configuration
-                properties:
-                  selfsignedcerts:
-                    description: Configuration for self-signed certificates.
-                    items:
-                      properties:
-                        certname:
-                          description: Certificate name on the node.
-                          type: string
-                        commonname:
-                          description: Common name to set in the cert.
-                          type: string
-                        keyname:
-                          description: Key name on the node.
-                          type: string
-                        keysize:
-                          description: RSA keysize to use for key generation.
-                          format: int32
-                          type: integer
-                      type: object
-                    type: array
-                type: object
-              intfmapping:
+              intfmappingstatus:
                 additionalProperties:
-                  type: string
-                description: Explicit interface mapping between kernel devices and
-                  interface names. If this is defined, any unmapped devices are ignored.
+                  additionalProperties:
+                    type: string
+                  type: object
                 type: object
               reason:
                 description: Reason for potential failure
                 type: string
+              selfsignedcertstatus:
+                additionalProperties:
+                  properties:
+                    certname:
+                      description: Certificate name on the node.
+                      type: string
+                    commonname:
+                      description: Common name to set in the cert.
+                      type: string
+                    keyname:
+                      description: Key name on the node.
+                      type: string
+                    keysize:
+                      description: RSA keysize to use for key generation.
+                      format: int32
+                      type: integer
+                  type: object
+                type: object
               status:
                 description: Device status
                 type: string
-              toggleoverrides:
+              toggleoverridesstatus:
                 additionalProperties:
-                  type: boolean
-                description: EOS feature toggle overrides
+                  additionalProperties:
+                    type: boolean
+                  type: object
                 type: object
             type: object
         type: object
