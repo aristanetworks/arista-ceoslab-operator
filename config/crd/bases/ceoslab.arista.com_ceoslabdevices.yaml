@@ -128,6 +128,8 @@ spec:
                     type: string
                   type: object
                 type: object
+              rceosstale:
+                type: boolean
               reason:
                 description: Reason for potential failure
                 type: string

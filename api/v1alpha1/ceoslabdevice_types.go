@@ -90,6 +90,7 @@ type CEosLabDeviceStatus struct {
 	SelfSignedCertStatus  map[string]SelfSignedCertConfig `json:"selfsignedcertstatus,omitempty"`
 	IntfMappingStatus     map[string]map[string]string    `json:"intfmappingstatus,omitempty"`
 	ToggleOverridesStatus map[string]map[string]bool      `json:"toggleoverridesstatus,omitempty"`
+	RcEosStale            bool                            `json:"rceosstale,omitempty"`
 }
 
 //+kubebuilder:object:root=true
