@@ -611,7 +611,7 @@ func getJsonIntfMapping(configMap *corev1.ConfigMap, intfMapping map[string]stri
 			return err
 		}
 	}
-	jsonIntfMappingBytes, err := json.Marshal(intfMapping)
+	jsonIntfMappingBytes, err := json.Marshal(jsonIntfMapping)
 	if err != nil {
 		return err
 	}
