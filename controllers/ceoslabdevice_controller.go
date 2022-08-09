@@ -251,6 +251,24 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		toggleOverridesConfig[name] = toggleOverrides
 	}
 
+	// KNE may create a file meant to be used as a startup config.
+	{
+		name := fmt.Sprintf("%s-config", device.Name)
+		createObject := func(object client.Object) error {
+			// No-op, We don't create this if KNE doesn't.
+			return nil
+		}
+		configMap := &corev1.ConfigMap{}
+		isNewObject, err := r.getOrCreateObject(device, name, createObject, configMap)
+		if err != nil {
+			return noRequeue, err
+		}
+		if !isNewObject {
+			// KNE created the config map
+			secretsAndConfigMaps[name] = configMap
+		}
+	}
+
 	// Pods
 
 	devicePod := &corev1.Pod{}
@@ -889,14 +907,24 @@ func getVolumes(secretsAndConfigMaps map[string]client.Object) []corev1.Volume {
 func getVolumeMounts(secretsAndConfigMaps map[string]client.Object) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{}
 	for name, secretOrConfigMap := range secretsAndConfigMaps {
-		var data map[string][]byte
+		filenames := []string{}
 		switch v := secretOrConfigMap.(type) {
 		case *corev1.ConfigMap:
-			data = v.BinaryData
+			for filename := range v.BinaryData {
+				filenames = append(filenames, filename)
+			}
+			for filename := range v.Data {
+				filenames = append(filenames, filename)
+			}
 		case *corev1.Secret:
-			data = v.Data
+			for filename := range v.Data {
+				filenames = append(filenames, filename)
+			}
+			for filename := range v.StringData {
+				filenames = append(filenames, filename)
+			}
 		}
-		for filename := range data {
+		for _, filename := range filenames {
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      volumeName(name),
 				MountPath: "/mnt/flash/" + filename,
