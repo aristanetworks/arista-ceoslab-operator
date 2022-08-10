@@ -251,20 +251,19 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		toggleOverridesConfig[name] = toggleOverrides
 	}
 
-	// KNE may create a file meant to be used as a startup config.
+	// KNE may create a configmap to be used as a startup config.
+	// Present caveat: changes to the configmap are not picked up because it is not "configured"
+	// through the CRD.
 	{
 		name := fmt.Sprintf("%s-config", device.Name)
-		createObject := func(object client.Object) error {
-			// No-op, We don't create this if KNE doesn't.
-			return nil
-		}
 		configMap := &corev1.ConfigMap{}
-		isNewObject, err := r.getOrCreateObject(device, name, createObject, configMap)
-		if err != nil {
+		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: device.Namespace}, configMap)
+		if err != nil && !errors.IsNotFound(err) {
+			errMsg := fmt.Sprintf("Failed to get %s for CEosLabDevice %s", name, device.Name)
+			log.Error(err, errMsg)
+			r.updateDeviceFail(device, errMsg)
 			return noRequeue, err
-		}
-		if !isNewObject {
-			// KNE created the config map
+		} else if err == nil {
 			secretsAndConfigMaps[name] = configMap
 		}
 	}
@@ -313,9 +312,29 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	doUpdateConfigMap := func(name string) {
 		msg := fmt.Sprintf("Updating %s for CEosLabDevice %s", name, device.Name)
 		log.Info(msg)
+		// Delete config map, we'll recreate it.
 		r.Delete(ctx, secretsAndConfigMaps[name])
 		r.Delete(ctx, devicePod)
 		r.updateDeviceReconciling(device, msg)
+	}
+
+	doDeleteConfigMap := func(name string, object client.Object) error {
+		// Delete dangling configmap/secret from old config, have to get it first
+		msg := fmt.Sprintf("Deleting %s for CEosLabDevice %s", name, device.Name)
+		log.Info(msg)
+		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: device.Namespace}, object)
+		if err == nil {
+			r.Delete(ctx, object)
+		} else if err != nil && !errors.IsNotFound(err) {
+			errMsg := fmt.Sprintf("Could not delete stale certificates for CEosLabDevice %s",
+				device.Name)
+			log.Error(err, errMsg)
+			r.updateDeviceFail(device, errMsg)
+			return err
+		}
+		r.Delete(ctx, devicePod)
+		r.updateDeviceReconciling(device, msg)
+		return nil
 	}
 
 	// Certificates
@@ -328,19 +347,16 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		}
 	}
 	// If we have statuses with no corresponding config, the certificate was deleted.
-	if len(device.Status.SelfSignedCertStatus) > len(selfSignedCertConfig) {
-		for name := range device.Status.SelfSignedCertStatus {
-			if _, present := selfSignedCertConfig[name]; !present {
-				msg := fmt.Sprintf("Deleting %s for CEosLabDevice %s", name, device.Name)
-				log.Info(msg)
-				delete(device.Status.SelfSignedCertStatus, name)
+	for name := range device.Status.SelfSignedCertStatus {
+		if _, present := selfSignedCertConfig[name]; !present {
+			device.Status.RcEosStale = true
+			secret := &corev1.ConfigMap{}
+			err := doDeleteConfigMap(name, secret)
+			if err != nil {
+				return noRequeue, err
 			}
+			delete(device.Status.SelfSignedCertStatus, name)
 		}
-		device.Status.RcEosStale = true
-		msg := fmt.Sprintf("Deleted stale certificates for CEosLabDevice %s", device.Name)
-		log.Info(msg)
-		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
 		return requeue, nil
 	}
 
@@ -358,12 +374,34 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return requeue, nil
 		}
 	}
+	for name := range device.Status.IntfMappingStatus {
+		if _, present := selfSignedCertConfig[name]; !present {
+			configMap := &corev1.ConfigMap{}
+			doDeleteConfigMap(name, configMap)
+			if err != nil {
+				return noRequeue, err
+			}
+			delete(device.Status.IntfMappingStatus, name)
+			return requeue, nil
+		}
+	}
 
 	// EOS feature toggle overrides
 	for name, toggleOverridesConfig := range toggleOverridesConfig {
 		toggleOverridesStatus := device.Status.ToggleOverridesStatus[name]
 		if !reflect.DeepEqual(toggleOverridesConfig, toggleOverridesStatus) {
 			doUpdateConfigMap(name)
+			return requeue, nil
+		}
+	}
+	for name := range device.Status.ToggleOverridesStatus {
+		if _, present := toggleOverridesConfig[name]; !present {
+			configMap := &corev1.ConfigMap{}
+			doDeleteConfigMap(name, configMap)
+			if err != nil {
+				return noRequeue, err
+			}
+			delete(device.Status.IntfMappingStatus, name)
 			return requeue, nil
 		}
 	}
