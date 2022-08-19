@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	ceoslabv1alpha1 "gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/api/v1alpha1"
+	ceoslabv1alpha1 "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"

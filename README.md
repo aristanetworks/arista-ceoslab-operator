@@ -5,7 +5,7 @@ by KNE. It is based on operator-sdk.
 ## Usage
 Deploy the kustomized k8s config:
 ```
-kubectl apply -k https://gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator/config/default
+kubectl apply -k https://github.com/aristanetworks/arista-ceoslab-operator/config/default
 ```
 This will pull any necessary images.
 

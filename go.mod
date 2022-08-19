@@ -1,4 +1,4 @@
-module gitlab.aristanetworks.com/ofrasier/arista-ceoslab-operator
+module github.com/aristanetworks/arista-ceoslab-operator
 
 go 1.17
 
