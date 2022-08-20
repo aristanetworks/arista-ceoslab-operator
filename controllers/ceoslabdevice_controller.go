@@ -38,7 +38,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/pointer"
@@ -772,25 +771,7 @@ func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndCo
 			},
 		}},
 		TerminationGracePeriodSeconds: pointer.Int64(0),
-		NodeSelector:                  map[string]string{},
-		Affinity: &corev1.Affinity{
-			PodAntiAffinity: &corev1.PodAntiAffinity{
-				PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-					Weight: 100,
-					PodAffinityTerm: corev1.PodAffinityTerm{
-						LabelSelector: &metav1.LabelSelector{
-							MatchExpressions: []metav1.LabelSelectorRequirement{{
-								Key:      "topo",
-								Operator: "In",
-								Values:   []string{device.Name},
-							}},
-						},
-						TopologyKey: "kubernetes.io/hostname",
-					},
-				}},
-			},
-		},
-		Volumes: volumes,
+		Volumes:                       volumes,
 	}
 	return nil
 }
