@@ -85,12 +85,21 @@ type CEosLabDeviceStatus struct {
 
 	// It's difficult to deduce the config maps' running state because the data is unstructured.
 	// For simplicity's sake we store the last configuration here. Other parameters are deduced
-	// via the K8s API. Keyed by keyed by configmap/secret name.
+	// via the K8s API.
 
-	SelfSignedCertStatus  map[string]SelfSignedCertConfig `json:"selfsignedcertstatus,omitempty"`
-	IntfMappingStatus     map[string]map[string]string    `json:"intfmappingstatus,omitempty"`
-	ToggleOverridesStatus map[string]map[string]bool      `json:"toggleoverridesstatus,omitempty"`
-	RcEosStale            bool                            `json:"rceosstale,omitempty"`
+	// ConfigMap state as configured in configmaps
+	ConfigMapStatus ConfigMapStatus `json:"configmapconfig,omitempty"`
+	// ConfigMap state as present in the pod. If these diverge, we need to restart the pod to
+	// update. Even if an in-place update is possible these are needed at boot time.
+	PodConfigMapStatus ConfigMapStatus `json:"podconfigmapconfig,omitempty"`
+}
+
+type ConfigMapStatus struct {
+	SelfSignedCertStatus         map[string]SelfSignedCertConfig `json:"selfsignedcertstatus,omitempty"`
+	IntfMappingStatus            map[string]string               `json:"intfmappingstatus,omitempty"`
+	ToggleOverridesStatus        map[string]bool                 `json:"toggleoverridesstatus,omitempty"`
+	RcEosStale                   bool                            `json:"rceosstale,omitempty"`
+	StartupConfigResourceVersion *string                         `json:"startupconfigresourceversion,omitempty"`
 }
 
 //+kubebuilder:object:root=true

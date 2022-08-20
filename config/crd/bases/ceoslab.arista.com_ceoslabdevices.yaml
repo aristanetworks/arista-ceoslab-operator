@@ -122,44 +122,82 @@ spec:
           status:
             description: CEosLabDeviceStatus defines the observed state of CEosLabDevice
             properties:
-              intfmappingstatus:
-                additionalProperties:
-                  additionalProperties:
+              configmapconfig:
+                description: ConfigMap state as configured in configmaps
+                properties:
+                  intfmappingstatus:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  rceosstale:
+                    type: boolean
+                  selfsignedcertstatus:
+                    additionalProperties:
+                      properties:
+                        certname:
+                          description: Certificate name on the node.
+                          type: string
+                        commonname:
+                          description: Common name to set in the cert.
+                          type: string
+                        keyname:
+                          description: Key name on the node.
+                          type: string
+                        keysize:
+                          description: RSA keysize to use for key generation.
+                          format: int32
+                          type: integer
+                      type: object
+                    type: object
+                  startupconfigresourceversion:
                     type: string
-                  type: object
+                  toggleoverridesstatus:
+                    additionalProperties:
+                      type: boolean
+                    type: object
                 type: object
-              rceosstale:
-                type: boolean
+              podconfigmapconfig:
+                description: ConfigMap state as present in the pod. If these diverge,
+                  we need to restart the pod to update. Even if an in-place update
+                  is possible these are needed at boot time.
+                properties:
+                  intfmappingstatus:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  rceosstale:
+                    type: boolean
+                  selfsignedcertstatus:
+                    additionalProperties:
+                      properties:
+                        certname:
+                          description: Certificate name on the node.
+                          type: string
+                        commonname:
+                          description: Common name to set in the cert.
+                          type: string
+                        keyname:
+                          description: Key name on the node.
+                          type: string
+                        keysize:
+                          description: RSA keysize to use for key generation.
+                          format: int32
+                          type: integer
+                      type: object
+                    type: object
+                  startupconfigresourceversion:
+                    type: string
+                  toggleoverridesstatus:
+                    additionalProperties:
+                      type: boolean
+                    type: object
+                type: object
               reason:
                 description: Reason for potential failure
                 type: string
-              selfsignedcertstatus:
-                additionalProperties:
-                  properties:
-                    certname:
-                      description: Certificate name on the node.
-                      type: string
-                    commonname:
-                      description: Common name to set in the cert.
-                      type: string
-                    keyname:
-                      description: Key name on the node.
-                      type: string
-                    keysize:
-                      description: RSA keysize to use for key generation.
-                      format: int32
-                      type: integer
-                  type: object
-                type: object
               status:
                 description: Device status
                 type: string
-              toggleoverridesstatus:
-                additionalProperties:
-                  additionalProperties:
-                    type: boolean
-                  type: object
-                type: object
             type: object
         type: object
     served: true

@@ -146,18 +146,22 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// and possibly a set of services (if configured in the spec).
 
 	// The error handling for creating and pushing k8s resources is very repetitive so it's
-	// been factored out. Requeue if we create any new objects to be certain we get them back.
+	// been factored out. Requeue if we create any new objects to check that we get them back.
 	haveNewObjects := false
 
 	// ConfigMaps and Secrets
 
-	// Store their config so we can reconcile them. Keyed by the name of the configmap/secret.
-	selfSignedCertConfig := map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
-	intfMappingConfig := map[string]map[string]string{}
-	toggleOverridesConfig := map[string]map[string]bool{}
+	intfMappingName := ""
+	toggleOverridesName := ""
 	rcEosName := ""
-	// Also, collect into a map so we can generate volumes from them.
+	startupConfigName := ""
+	// Store certificate config to simplify reconciliation later. Keyed by secret name.
+	selfSignedCertConfigs := map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
+
+	// Also, collect them into a map so we can generate volumes from them.
 	secretsAndConfigMaps := map[string]client.Object{}
+
+	configMapStatus := &device.Status.ConfigMapStatus
 
 	// Certificates
 	selfSignedCerts := device.Spec.CertConfig.SelfSignedCerts
@@ -168,13 +172,13 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			if err != nil {
 				return err
 			}
-			// Update status subresource to reflect configuration of this secret
-			if device.Status.SelfSignedCertStatus == nil {
-				device.Status.SelfSignedCertStatus = map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
+			ssCertStatus := &configMapStatus.SelfSignedCertStatus
+			if *ssCertStatus == nil {
+				*ssCertStatus = map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
 			}
-			device.Status.SelfSignedCertStatus[name] = certConfig
-			// We have a new certificate so mark any existing rc.eos as stale
-			device.Status.RcEosStale = true
+			(*ssCertStatus)[name] = certConfig
+			// Need to generate new rc.eos to reflect new certificates
+			configMapStatus.RcEosStale = true
 			return nil
 		}
 		secret := &corev1.Secret{}
@@ -184,7 +188,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		}
 		haveNewObjects = haveNewObjects || isNewObject
 		secretsAndConfigMaps[name] = secret
-		selfSignedCertConfig[name] = certConfig
+		selfSignedCertConfigs[name] = certConfig
 	}
 
 	// Generate rc.eos to load certificates from /mnt/flash into in-memory filesystem
@@ -192,7 +196,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		rcEosName = fmt.Sprintf("configmap-rceos-%s", device.Name)
 		createObject := func(object client.Object) error {
 			getRcEos(object.(*corev1.ConfigMap), selfSignedCerts)
-			device.Status.RcEosStale = false
+			configMapStatus.RcEosStale = false
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
@@ -207,64 +211,58 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// Explicit kernel device to EOS interface mapping
 	intfMapping := device.Spec.IntfMapping
 	if len(intfMapping) > 0 {
-		name := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
+		intfMappingName = fmt.Sprintf("configmap-intfmapping-%s", device.Name)
 		createObject := func(object client.Object) error {
 			err := getJsonIntfMapping(object.(*corev1.ConfigMap), intfMapping)
 			if err != nil {
 				return err
 			}
-			if device.Status.IntfMappingStatus == nil {
-				device.Status.IntfMappingStatus = map[string]map[string]string{}
-			}
-			device.Status.IntfMappingStatus[name] = intfMapping
+			configMapStatus.IntfMappingStatus = intfMapping
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
-		isNewObject, err := r.getOrCreateObject(device, name, createObject, configMap)
+		isNewObject, err := r.getOrCreateObject(device, intfMappingName, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps[name] = configMap
-		intfMappingConfig[name] = intfMapping
+		secretsAndConfigMaps[intfMappingName] = configMap
 	}
 
 	// Feature toggle overrides
 	toggleOverrides := device.Spec.ToggleOverrides
 	if len(toggleOverrides) > 0 {
-		name := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
+		toggleOverridesName = fmt.Sprintf("configmap-toggle-override-%s", device.Name)
 		createObject := func(object client.Object) error {
 			getToggleOverrides(object.(*corev1.ConfigMap), toggleOverrides)
-			if device.Status.ToggleOverridesStatus == nil {
-				device.Status.ToggleOverridesStatus = map[string]map[string]bool{}
-			}
-			device.Status.ToggleOverridesStatus[name] = toggleOverrides
+			configMapStatus.ToggleOverridesStatus = toggleOverrides
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
-		isNewObject, err := r.getOrCreateObject(device, name, createObject, configMap)
+		isNewObject, err := r.getOrCreateObject(device, toggleOverridesName, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
 		haveNewObjects = haveNewObjects || isNewObject
-		secretsAndConfigMaps[name] = configMap
-		toggleOverridesConfig[name] = toggleOverrides
+		secretsAndConfigMaps[toggleOverridesName] = configMap
 	}
 
 	// KNE may create a configmap to be used as a startup config.
-	// Present caveat: changes to the configmap are not picked up because it is not "configured"
-	// through the CRD.
+	var startupConfigResourceVersion *string = nil
 	{
-		name := fmt.Sprintf("%s-config", device.Name)
+		startupConfigName = fmt.Sprintf("%s-config", device.Name)
 		configMap := &corev1.ConfigMap{}
-		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: device.Namespace}, configMap)
+		err := r.Get(ctx, types.NamespacedName{Name: startupConfigName, Namespace: device.Namespace}, configMap)
 		if err != nil && !errors.IsNotFound(err) {
-			errMsg := fmt.Sprintf("Failed to get %s for CEosLabDevice %s", name, device.Name)
+			errMsg := fmt.Sprintf("Failed to get %s for CEosLabDevice %s", startupConfigName, device.Name)
 			log.Error(err, errMsg)
 			r.updateDeviceFail(device, errMsg)
 			return noRequeue, err
 		} else if err == nil {
-			secretsAndConfigMaps[name] = configMap
+			// KNE created the configmap
+			startupConfigResourceVersion = pointer.String(configMap.ObjectMeta.ResourceVersion)
+			configMapStatus.StartupConfigResourceVersion = startupConfigResourceVersion
+			secretsAndConfigMaps[startupConfigName] = configMap
 		}
 	}
 
@@ -273,7 +271,15 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	devicePod := &corev1.Pod{}
 	{
 		createPodObject := func(object client.Object) error {
-			return getPod(object.(*corev1.Pod), device, secretsAndConfigMaps)
+			err := getPod(object.(*corev1.Pod), device, secretsAndConfigMaps)
+			if err != nil {
+				return err
+			}
+			// Write back the configmap state at the time the pod is created. This way
+			// we can resolve discrepencies between the pod and configmaps even if
+			// the configmaps have already been updated.
+			(&device.Status.ConfigMapStatus).DeepCopyInto(&device.Status.PodConfigMapStatus)
+			return nil
 		}
 		isNewObject, err := r.getOrCreateObject(device, device.Name, createPodObject, devicePod)
 		if err != nil {
@@ -314,7 +320,6 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		log.Info(msg)
 		// Delete config map, we'll recreate it.
 		r.Delete(ctx, secretsAndConfigMaps[name])
-		r.Delete(ctx, devicePod)
 		r.updateDeviceReconciling(device, msg)
 	}
 
@@ -326,84 +331,110 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		if err == nil {
 			r.Delete(ctx, object)
 		} else if err != nil && !errors.IsNotFound(err) {
-			errMsg := fmt.Sprintf("Could not delete stale certificates for CEosLabDevice %s",
-				device.Name)
+			errMsg := fmt.Sprintf("Could not delete %s for CEosLabDevice %s", name, device.Name)
 			log.Error(err, errMsg)
 			r.updateDeviceFail(device, errMsg)
 			return err
 		}
-		r.Delete(ctx, devicePod)
 		r.updateDeviceReconciling(device, msg)
 		return nil
 	}
-
 	// Certificates
-	for name, certConfig := range selfSignedCertConfig {
-		certStatus := device.Status.SelfSignedCertStatus[name]
+	for name, certConfig := range selfSignedCertConfigs {
+		certStatus := configMapStatus.SelfSignedCertStatus[name]
 		if certConfig != certStatus {
-			device.Status.RcEosStale = true
+			configMapStatus.RcEosStale = true
 			doUpdateConfigMap(name)
 			return requeue, nil
 		}
 	}
-	// If we have statuses with no corresponding config, the certificate was deleted.
-	for name := range device.Status.SelfSignedCertStatus {
-		if _, present := selfSignedCertConfig[name]; !present {
-			device.Status.RcEosStale = true
+	for name := range configMapStatus.SelfSignedCertStatus {
+		if _, present := selfSignedCertConfigs[name]; !present {
+			configMapStatus.RcEosStale = true
 			secret := &corev1.ConfigMap{}
 			err := doDeleteConfigMap(name, secret)
 			if err != nil {
 				return noRequeue, err
 			}
-			delete(device.Status.SelfSignedCertStatus, name)
+			delete(configMapStatus.SelfSignedCertStatus, name)
+			return requeue, nil
 		}
-		return requeue, nil
 	}
 
-	// rc.eos
-	if device.Status.RcEosStale {
+	// rc.eos boot script
+	if configMapStatus.RcEosStale {
 		doUpdateConfigMap(rcEosName)
 		return requeue, nil
 	}
 
 	// Explicit kernel device to EOS interface mapping
-	for name, intfMappingConfig := range intfMappingConfig {
-		intfMappingStatus := device.Status.IntfMappingStatus[name]
-		if !reflect.DeepEqual(intfMappingConfig, intfMappingStatus) {
-			doUpdateConfigMap(name)
-			return requeue, nil
-		}
-	}
-	for name := range device.Status.IntfMappingStatus {
-		if _, present := selfSignedCertConfig[name]; !present {
+	intfMappingStatus := configMapStatus.IntfMappingStatus
+	if intfMappingStatus != nil {
+		if intfMapping != nil {
+			if !reflect.DeepEqual(intfMapping, intfMappingStatus) {
+				doUpdateConfigMap(intfMappingName)
+				return requeue, nil
+			}
+		} else {
 			configMap := &corev1.ConfigMap{}
-			doDeleteConfigMap(name, configMap)
+			doDeleteConfigMap(intfMappingName, configMap)
 			if err != nil {
 				return noRequeue, err
 			}
-			delete(device.Status.IntfMappingStatus, name)
+			configMapStatus.IntfMappingStatus = nil
 			return requeue, nil
 		}
 	}
 
 	// EOS feature toggle overrides
-	for name, toggleOverridesConfig := range toggleOverridesConfig {
-		toggleOverridesStatus := device.Status.ToggleOverridesStatus[name]
-		if !reflect.DeepEqual(toggleOverridesConfig, toggleOverridesStatus) {
-			doUpdateConfigMap(name)
-			return requeue, nil
-		}
-	}
-	for name := range device.Status.ToggleOverridesStatus {
-		if _, present := toggleOverridesConfig[name]; !present {
+	toggleOverridesStatus := configMapStatus.ToggleOverridesStatus
+	if toggleOverridesStatus != nil {
+		if toggleOverrides != nil {
+			if !reflect.DeepEqual(toggleOverrides, toggleOverridesStatus) {
+				doUpdateConfigMap(toggleOverridesName)
+				return requeue, nil
+			}
+		} else {
 			configMap := &corev1.ConfigMap{}
-			doDeleteConfigMap(name, configMap)
+			doDeleteConfigMap(toggleOverridesName, configMap)
 			if err != nil {
 				return noRequeue, err
 			}
-			delete(device.Status.IntfMappingStatus, name)
+			configMapStatus.ToggleOverridesStatus = nil
 			return requeue, nil
 		}
+	}
+
+	// Startup config
+	startupConfigResourceVersionStatus := configMapStatus.StartupConfigResourceVersion
+	if startupConfigResourceVersionStatus != nil {
+		if startupConfigResourceVersion != nil {
+			if *startupConfigResourceVersionStatus != *startupConfigResourceVersion {
+				// No need to update the configmap, KNE already did. But we do
+				// need to update the state which will trigger a pod restart
+				// next reconciliation because the configmap and pod configmap
+				// statuses will diverge.
+				configMapStatus.StartupConfigResourceVersion = startupConfigResourceVersion
+			}
+		} else {
+			// Again, no need to delete anything, but we still need to update the
+			// status for the same reason.
+			configMapStatus.StartupConfigResourceVersion = nil
+			return requeue, nil
+		}
+	}
+
+	// Ensure pod configmap config is the same as the current configmap config
+	podConfigMapStatus := &device.Status.PodConfigMapStatus
+	if !reflect.DeepEqual(podConfigMapStatus, configMapStatus) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s configmaps, new: %v, old; %v",
+			device.Name, configMapStatus, podConfigMapStatus)
+		log.Info(msg)
+		// These configmaps are required at boot time so we need to restart the pod
+		// Delete the pod, and requeue to recreate
+		r.Delete(ctx, devicePod)
+		r.updateDeviceReconciling(device, msg)
+		return requeue, nil
 	}
 
 	// Ensure the pod labels are the same as the metadata
