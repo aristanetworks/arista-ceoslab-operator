@@ -16,15 +16,15 @@ of the operator and cEOS-lab are tagged as named in `kuttl-test.yaml` in the rep
 Kuttl can be used either through its binary or `kubectl kuttl`.
 
 As mentioned above, these tests use the manifest file in `config/kustomized` to stage the test
-cluster (kuttl does not support kustomize). If any changes are made to the kustomization files,
-for instance, when changing the version/tag or image name in the makefile, this manifest should
+cluster (kuttl does not support kustomize). If relevant changes are made to the kustomization files
+or Makefile, for instance, when changing the version/tag or image name, this manifest should
 be updated by `make manifests`.
 
 ## Versioning
 The git tag will match the project version defined in the Makefile and the image tag present in
 the manifest.
 
-### How it works
+## How it works
 This project aims to follow the Kubernetes [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
 
 It uses [Controllers](https://kubernetes.io/docs/concepts/architecture/controller/) 
@@ -45,4 +45,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
