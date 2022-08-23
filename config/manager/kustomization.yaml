@@ -13,4 +13,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: arista-ceoslab-operator
-  newTag: v0.1
+  newTag: v0.1.1

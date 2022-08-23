@@ -471,7 +471,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: arista-ceoslab-operator:v0.1
+        image: arista-ceoslab-operator:v0.1.1
         livenessProbe:
           httpGet:
             path: /healthz
