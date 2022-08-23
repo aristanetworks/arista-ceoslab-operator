@@ -99,12 +99,6 @@ spec:
                         format: int32
                         type: integer
                       type: array
-                    udpports:
-                      description: UDP ports to forward to the pod.
-                      items:
-                        format: int32
-                        type: integer
-                      type: array
                   type: object
                 description: 'Port mappings for container services. Default: none'
                 type: object

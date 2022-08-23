@@ -29,6 +29,7 @@ import (
 	"math/big"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -150,10 +151,6 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// ConfigMaps and Secrets
 
-	intfMappingName := ""
-	toggleOverridesName := ""
-	rcEosName := ""
-	startupConfigName := ""
 	// Store certificate config to simplify reconciliation later. Keyed by secret name.
 	selfSignedCertConfigs := map[string]ceoslabv1alpha1.SelfSignedCertConfig{}
 
@@ -191,8 +188,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Generate rc.eos to load certificates from /mnt/flash into in-memory filesystem
-	if len(selfSignedCerts) > 0 {
-		rcEosName = fmt.Sprintf("configmap-rceos-%s", device.Name)
+	rcEosName := fmt.Sprintf("configmap-rceos-%s", device.Name)
+	if selfSignedCerts != nil {
 		createObject := func(object client.Object) error {
 			getRcEos(object.(*corev1.ConfigMap), selfSignedCerts)
 			configMapStatus.RcEosStale = false
@@ -209,8 +206,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// Explicit kernel device to EOS interface mapping
 	intfMapping := device.Spec.IntfMapping
-	if len(intfMapping) > 0 {
-		intfMappingName = fmt.Sprintf("configmap-intfmapping-%s", device.Name)
+	intfMappingName := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
+	if intfMapping != nil {
 		createObject := func(object client.Object) error {
 			err := getJsonIntfMapping(object.(*corev1.ConfigMap), intfMapping)
 			if err != nil {
@@ -230,8 +227,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// Feature toggle overrides
 	toggleOverrides := device.Spec.ToggleOverrides
-	if len(toggleOverrides) > 0 {
-		toggleOverridesName = fmt.Sprintf("configmap-toggle-override-%s", device.Name)
+	toggleOverridesName := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
+	if toggleOverrides != nil {
 		createObject := func(object client.Object) error {
 			getToggleOverrides(object.(*corev1.ConfigMap), toggleOverrides)
 			configMapStatus.ToggleOverridesStatus = toggleOverrides
@@ -248,8 +245,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// KNE may create a configmap to be used as a startup config.
 	var startupConfigResourceVersion *string = nil
+	startupConfigName := fmt.Sprintf("%s-config", device.Name)
 	{
-		startupConfigName = fmt.Sprintf("%s-config", device.Name)
 		configMap := &corev1.ConfigMap{}
 		err := r.Get(ctx, types.NamespacedName{Name: startupConfigName, Namespace: device.Namespace}, configMap)
 		if err != nil && !errors.IsNotFound(err) {
@@ -269,6 +266,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	devicePod := &corev1.Pod{}
 	{
+		podName := device.Name
 		createPodObject := func(object client.Object) error {
 			err := getPod(object.(*corev1.Pod), device, secretsAndConfigMaps)
 			if err != nil {
@@ -280,7 +278,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			(&device.Status.ConfigMapStatus).DeepCopyInto(&device.Status.PodConfigMapStatus)
 			return nil
 		}
-		isNewObject, err := r.getOrCreateObject(device, device.Name, createPodObject, devicePod)
+		isNewObject, err := r.getOrCreateObject(device, podName, createPodObject, devicePod)
 		if err != nil {
 			return noRequeue, err
 		}
@@ -290,8 +288,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// Services
 
 	deviceService := &corev1.Service{}
-	{
-		serviceName := fmt.Sprintf("service-%s", device.Name)
+	serviceName := fmt.Sprintf("service-%s", device.Name)
+	if device.Spec.Services != nil {
 		getServiceObject := func(object client.Object) error {
 			getService(object.(*corev1.Service), device)
 			return nil
@@ -313,17 +311,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// Reconcile observed state against desired state
 
-	// Validate ConfigMaps and Secrets
-	doUpdateConfigMap := func(name string) {
-		msg := fmt.Sprintf("Updating %s for CEosLabDevice %s", name, device.Name)
-		log.Info(msg)
-		// Delete config map, we'll recreate it.
-		r.Delete(ctx, secretsAndConfigMaps[name])
-		r.updateDeviceReconciling(device, msg)
-	}
-
 	doDeleteConfigMap := func(name string, object client.Object) error {
-		// Delete dangling configmap/secret from old config, have to get it first
 		msg := fmt.Sprintf("Deleting %s for CEosLabDevice %s", name, device.Name)
 		log.Info(msg)
 		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: device.Namespace}, object)
@@ -335,34 +323,52 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			r.updateDeviceFail(device, errMsg)
 			return err
 		}
-		r.updateDeviceReconciling(device, msg)
 		return nil
 	}
+
 	// Certificates
 	for name, certConfig := range selfSignedCertConfigs {
 		certStatus := configMapStatus.SelfSignedCertStatus[name]
 		if certConfig != certStatus {
+			msg := fmt.Sprintf("Cert %s out-of-sync for CEosLabDevice %s", name, device.Name)
+			log.Info(msg)
 			configMapStatus.RcEosStale = true
-			doUpdateConfigMap(name)
+			doDeleteConfigMap(name, &corev1.Secret{})
+			r.updateDeviceReconciling(device, msg)
 			return requeue, nil
 		}
 	}
 	for name := range configMapStatus.SelfSignedCertStatus {
 		if _, present := selfSignedCertConfigs[name]; !present {
+			msg := fmt.Sprintf("Cert %s deleted from CEosLabDevice %s", name, device.Name)
+			log.Info(msg)
 			configMapStatus.RcEosStale = true
-			secret := &corev1.ConfigMap{}
-			err := doDeleteConfigMap(name, secret)
+			delete(configMapStatus.SelfSignedCertStatus, name)
+			if len(configMapStatus.SelfSignedCertStatus) == 0 {
+				configMapStatus.SelfSignedCertStatus = nil
+			}
+			err := doDeleteConfigMap(name, &corev1.Secret{})
 			if err != nil {
 				return noRequeue, err
 			}
-			delete(configMapStatus.SelfSignedCertStatus, name)
+			r.updateDeviceReconciling(device, msg)
 			return requeue, nil
 		}
 	}
 
 	// rc.eos boot script
 	if configMapStatus.RcEosStale {
-		doUpdateConfigMap(rcEosName)
+		msg := ""
+		if selfSignedCerts != nil {
+			msg = fmt.Sprintf("rc.eos out-of-sync for CEosLabDevice %s", device.Name)
+			log.Info(msg)
+		} else {
+			msg = fmt.Sprintf("Deleting rc.eos for CEosLabDevice %s", device.Name)
+			log.Info(msg)
+			configMapStatus.RcEosStale = false
+		}
+		doDeleteConfigMap(rcEosName, &corev1.ConfigMap{})
+		r.updateDeviceReconciling(device, msg)
 		return requeue, nil
 	}
 
@@ -371,16 +377,23 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	if intfMappingStatus != nil {
 		if intfMapping != nil {
 			if !reflect.DeepEqual(intfMapping, intfMappingStatus) {
-				doUpdateConfigMap(intfMappingName)
+				msg := fmt.Sprintf("Interface mapping out-of-sync for CEosLabDevice %s",
+					device.Name)
+				log.Info(msg)
+				doDeleteConfigMap(intfMappingName, &corev1.ConfigMap{})
+				r.updateDeviceReconciling(device, msg)
 				return requeue, nil
 			}
 		} else {
-			configMap := &corev1.ConfigMap{}
-			doDeleteConfigMap(intfMappingName, configMap)
+			msg := fmt.Sprintf("Interface mapping deleted from CEosLabDevice %s",
+				device.Name)
+			log.Info(msg)
+			configMapStatus.IntfMappingStatus = nil
+			doDeleteConfigMap(intfMappingName, &corev1.ConfigMap{})
 			if err != nil {
 				return noRequeue, err
 			}
-			configMapStatus.IntfMappingStatus = nil
+			r.updateDeviceReconciling(device, msg)
 			return requeue, nil
 		}
 	}
@@ -390,16 +403,23 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	if toggleOverridesStatus != nil {
 		if toggleOverrides != nil {
 			if !reflect.DeepEqual(toggleOverrides, toggleOverridesStatus) {
-				doUpdateConfigMap(toggleOverridesName)
+				msg := fmt.Sprintf("Toggle overrides out-of-sync for CEosLabDevice %s",
+					device.Name)
+				log.Info(msg)
+				doDeleteConfigMap(toggleOverridesName, &corev1.ConfigMap{})
+				r.updateDeviceReconciling(device, msg)
 				return requeue, nil
 			}
 		} else {
-			configMap := &corev1.ConfigMap{}
-			doDeleteConfigMap(toggleOverridesName, configMap)
+			msg := fmt.Sprintf("Toggle overrides deleted from CEosLabDevice %s",
+				device.Name)
+			log.Info(msg)
+			configMapStatus.ToggleOverridesStatus = nil
+			doDeleteConfigMap(toggleOverridesName, &corev1.ConfigMap{})
 			if err != nil {
 				return noRequeue, err
 			}
-			configMapStatus.ToggleOverridesStatus = nil
+			r.updateDeviceReconciling(device, msg)
 			return requeue, nil
 		}
 	}
@@ -414,11 +434,18 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 				// next reconciliation because the configmap and pod configmap
 				// statuses will diverge.
 				configMapStatus.StartupConfigResourceVersion = startupConfigResourceVersion
+				msg := fmt.Sprintf("Startup-config out-of-sync for CEosLabDevice %s", device.Name)
+				log.Info(msg)
+				r.updateDeviceReconciling(device, msg)
+				return requeue, nil
 			}
 		} else {
 			// Again, no need to delete anything, but we still need to update the
 			// status for the same reason.
 			configMapStatus.StartupConfigResourceVersion = nil
+			msg := fmt.Sprintf("Startup-config deleted from CEosLabDevice %s", device.Name)
+			log.Info(msg)
+			r.updateDeviceReconciling(device, msg)
 			return requeue, nil
 		}
 	}
@@ -484,10 +511,11 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	specResourceRequirements, err := getResourceMap(device)
 	containerResourceRequirements := getResourceMapFromK8sAPI(&container.Resources)
 	if err != nil {
-		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod  requirements, new: %v, old: %v",
+		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod requirements, new: %v, old: %v",
 			device.Name, device.Spec.Resources, containerResourceRequirements)
 		log.Error(err, errMsg)
 		r.updateDeviceFail(device, errMsg)
+		return noRequeue, nil
 	}
 	if !reflect.DeepEqual(specResourceRequirements, containerResourceRequirements) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod resource requirements, new: %v, old: %v",
@@ -501,8 +529,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Ensure the pod args are the same as the spec
-	specArgs := getArgsMap(device, envVarsMap)
-	containerArgs := strSliceToMap(container.Args)
+	specArgs := getArgs(device, envVarsMap)
+	containerArgs := container.Args
 	if !reflect.DeepEqual(specArgs, containerArgs) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod arguments, new: %v, old: %v",
 			device.Name, specArgs, containerArgs)
@@ -517,8 +545,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// Ensure the pod init container args are correct.
 	initContainer := devicePod.Spec.InitContainers[0]
-	specInitContainerArgs := strSliceToMap(getInitContainerArgs(device))
-	podInitContainerArgs := strSliceToMap(initContainer.Args)
+	specInitContainerArgs := getInitContainerArgs(device)
+	podInitContainerArgs := initContainer.Args
 	if !reflect.DeepEqual(specInitContainerArgs, podInitContainerArgs) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod init container arguments, new: %s, old: %s",
 			device.Name, specInitContainerArgs, podInitContainerArgs)
@@ -537,9 +565,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old; %v",
 			device.Name, specServiceMap, containerServiceMap)
 		log.Info(msg)
-		// Update pod
-		deviceService.Spec.Ports = getServicePortsAPI(specServiceMap)
-		r.Update(ctx, deviceService)
+		// We could update services in place but this would make it harder to handle
+		// the delete case. The fallout from just deleting and recreating them is
+		// comparatively minimal.
+		r.Delete(ctx, deviceService)
 		// Update status
 		r.updateDeviceReconciling(device, msg)
 		return requeue, nil
@@ -726,7 +755,7 @@ func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndCo
 	envVarsMap := getEnvVarsMap(device)
 	env := getEnvVarsAPI(device, envVarsMap)
 	command := getCommand(device)
-	args := strMapToSlice(getArgsMap(device, envVarsMap))
+	args := getArgs(device, envVarsMap)
 	image := getImage(device)
 	resourceMap, err := getResourceMap(device)
 	if err != nil {
@@ -789,11 +818,18 @@ func getEnvVarsMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]string {
 }
 
 func getEnvVarsAPI(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]string) []corev1.EnvVar {
+	varnames := []string{}
+	for varname := range envVarsMap {
+		varnames = append(varnames, varname)
+	}
+	// Sort the environment variables. It's important to have deterministic output for
+	// testing purposes.
+	sort.Strings(varnames)
 	envVars := []corev1.EnvVar{}
-	for varname, val := range envVarsMap {
+	for _, varname := range varnames {
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  varname,
-			Value: val,
+			Value: envVarsMap[varname],
 		})
 	}
 	return envVars
@@ -833,31 +869,23 @@ func getImage(device *ceoslabv1alpha1.CEosLabDevice) string {
 	return image
 }
 
-func getArgsMap(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]string) map[string]struct{} {
-	args := map[string]struct{}{}
-	for varname, val := range envVarsMap {
-		args["systemd.setenv="+varname+"="+val] = struct{}{}
+func getArgs(device *ceoslabv1alpha1.CEosLabDevice, envVarsMap map[string]string) []string {
+	varnames := []string{}
+	for varname := range envVarsMap {
+		varnames = append(varnames, varname)
+	}
+	// Sort the environment variables. It's important to have deterministic output for
+	// testing purposes.
+	sort.Strings(varnames)
+	args := []string{}
+	for _, varname := range varnames {
+		val := envVarsMap[varname]
+		args = append(args, "systemd.setenv="+varname+"="+val)
 	}
 	for _, arg := range device.Spec.Args {
-		args[arg] = struct{}{}
+		args = append(args, arg)
 	}
 	return args
-}
-
-func strSliceToMap(slice []string) map[string]struct{} {
-	strMap := map[string]struct{}{}
-	for _, str := range slice {
-		strMap[str] = struct{}{}
-	}
-	return strMap
-}
-
-func strMapToSlice(strMap map[string]struct{}) []string {
-	slice := []string{}
-	for str := range strMap {
-		slice = append(slice, str)
-	}
-	return slice
 }
 
 func getInitContainerArgs(device *ceoslabv1alpha1.CEosLabDevice) []string {
@@ -910,8 +938,14 @@ func volumeName(configMapName string) string {
 }
 
 func getVolumes(secretsAndConfigMaps map[string]client.Object) []corev1.Volume {
+	volumeNames := []string{}
+	for name := range secretsAndConfigMaps {
+		volumeNames = append(volumeNames, name)
+	}
+	sort.Strings(volumeNames)
 	volumes := []corev1.Volume{}
-	for name, secretOrConfigMap := range secretsAndConfigMaps {
+	for _, name := range volumeNames {
+		secretOrConfigMap := secretsAndConfigMaps[name]
 		var permissions *int32 = nil
 		if permsStr, ok := secretOrConfigMap.GetAnnotations()["permissions"]; ok {
 			// Permissions are represented in octal
@@ -955,8 +989,14 @@ func getVolumes(secretsAndConfigMaps map[string]client.Object) []corev1.Volume {
 }
 
 func getVolumeMounts(secretsAndConfigMaps map[string]client.Object) []corev1.VolumeMount {
+	volumeNames := []string{}
+	for name := range secretsAndConfigMaps {
+		volumeNames = append(volumeNames, name)
+	}
+	sort.Strings(volumeNames)
 	mounts := []corev1.VolumeMount{}
-	for name, secretOrConfigMap := range secretsAndConfigMaps {
+	for _, name := range volumeNames {
+		secretOrConfigMap := secretsAndConfigMaps[name]
 		filenames := []string{}
 		switch v := secretOrConfigMap.(type) {
 		case *corev1.ConfigMap:
@@ -1001,51 +1041,40 @@ func getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) 
 	return
 }
 
-type deviceServicePort struct {
-	port     uint32
-	protocol corev1.Protocol
-}
-
-func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]deviceServicePort {
-	serviceMap := map[string]deviceServicePort{}
+func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]uint32 {
+	serviceMap := map[string]uint32{}
 	for service, serviceConfig := range device.Spec.Services {
 		for _, tcpPort := range serviceConfig.TCPPorts {
-			serviceName := strings.ToLower(fmt.Sprintf("%s%s%d", service, "TCP", tcpPort))
-			serviceMap[serviceName] = deviceServicePort{
-				port:     tcpPort,
-				protocol: "TCP",
-			}
-		}
-		for _, udpPort := range serviceConfig.UDPPorts {
-			serviceName := strings.ToLower(fmt.Sprintf("%s%s%d", service, "UDP", udpPort))
-			serviceMap[serviceName] = deviceServicePort{
-				port:     udpPort,
-				protocol: "UDP",
-			}
+			serviceName := strings.ToLower(fmt.Sprintf("%s%d", service, tcpPort))
+			serviceMap[serviceName] = tcpPort
 		}
 	}
 	return serviceMap
 }
 
-func getServiceMapFromK8sAPI(service *corev1.Service) map[string]deviceServicePort {
-	serviceMap := map[string]deviceServicePort{}
+func getServiceMapFromK8sAPI(service *corev1.Service) map[string]uint32 {
+	serviceMap := map[string]uint32{}
 	for _, v := range service.Spec.Ports {
-		serviceMap[v.Name] = deviceServicePort{
-			port:     uint32(v.Port),
-			protocol: v.Protocol,
-		}
+		serviceMap[v.Name] = uint32(v.Port)
 	}
 	return serviceMap
 }
 
-func getServicePortsAPI(serviceMap map[string]deviceServicePort) []corev1.ServicePort {
+func getServicePortsAPI(serviceMap map[string]uint32) []corev1.ServicePort {
+	services := []string{}
+	for service := range serviceMap {
+		services = append(services, service)
+	}
+	// Sort the services. It's important to have deterministic output for testing purposes.
+	sort.Strings(services)
 	ports := []corev1.ServicePort{}
-	for serviceName, servicePort := range serviceMap {
+	for _, serviceName := range services {
+		servicePort := serviceMap[serviceName]
 		// serviceName is the service name concatenated with the protocol type
 		ports = append(ports, corev1.ServicePort{
 			Name:     serviceName,
-			Protocol: servicePort.protocol,
-			Port:     int32(servicePort.port),
+			Protocol: corev1.ProtocolTCP,
+			Port:     int32(servicePort),
 		})
 	}
 	return ports

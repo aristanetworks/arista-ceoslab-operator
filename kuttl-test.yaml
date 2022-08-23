@@ -1,0 +1,16 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestSuite
+startKIND: true
+kindContext: arista-ceoslab-operator-test
+testDirs:
+- test
+manifestDirs:
+- config/kustomized
+kindContainers:
+- arista-ceoslab-operator:v0.1
+- ceos:latest
+- ceos-2:latest
+skipDelete: true
+skipClusterDelete: true
+# The default timeout of 30 seconds is much to short for ceos to boot reliably
+timeout: 120

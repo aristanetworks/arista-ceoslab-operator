@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  containers:
+  - args:
+    - systemd.setenv=CEOS=1
+    - systemd.setenv=EOS_PLATFORM=ceoslab
+    - systemd.setenv=ETBA=1
+    - systemd.setenv=INTFTYPE=eth
+    - systemd.setenv=SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1
+    - systemd.setenv=container=docker
+    command:
+    - /sbin/init
+    env:
+    - name: CEOS
+      value: "1"
+    - name: EOS_PLATFORM
+      value: ceoslab
+    - name: ETBA
+      value: "1"
+    - name: INTFTYPE
+      value: eth
+    - name: SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT
+      value: "1"
+    - name: container
+      value: docker
+    image: ceos:latest
+    imagePullPolicy: IfNotPresent
+    name: ceos
+    resources: {}
+    securityContext:
+      privileged: true
+    startupProbe:
+      exec:
+        command:
+        - wfw
+        - -t
+        - "5"
+      failureThreshold: 12
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 5
+  initContainers:
+  - args:
+    - "1"
+    - "0"
+    image: networkop/init-wait:latest
+    imagePullPolicy: IfNotPresent
+    name: init-ceoslab-device
+    resources: {}
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+status:
+  status: success

@@ -53,8 +53,6 @@ type CEosLabDeviceSpec struct {
 type ServiceConfig struct {
 	// TCP ports to forward to the pod.
 	TCPPorts []uint32 `json:"tcpports,omitempty"`
-	// UDP ports to forward to the pod.
-	UDPPorts []uint32 `json:"udpports,omitempty"`
 }
 
 type CertConfig struct {

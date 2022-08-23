@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  containers:
+  - volumeMounts:
+    - mountPath: /mnt/flash/toggle_override
+      name: volume-configmap-toggle-override-ceoslab-device
+      subPath: toggle_override
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    name: ceos
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  toggleoverrides:
+    TestFeatureToggle: true
+status:
+  configmapconfig:
+    toggleoverridesstatus:
+      TestFeatureToggle: true
+  podconfigmapconfig:
+    toggleoverridesstatus:
+      TestFeatureToggle: true
+  status: success
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: configmap-toggle-override-ceoslab-device
+  ownerReferences:
+  - apiVersion: ceoslab.arista.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: CEosLabDevice
+    name: ceoslab-device

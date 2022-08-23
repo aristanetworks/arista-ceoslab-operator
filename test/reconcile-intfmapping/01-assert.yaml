@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  containers:
+  - volumeMounts:
+    - mountPath: /mnt/flash/EosIntfMapping.json
+      name: volume-configmap-intfmapping-ceoslab-device
+      subPath: EosIntfMapping.json
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    name: ceos
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  intfmapping:
+    eth1: Ethernet1/1
+status:
+  configmapconfig:
+    intfmappingstatus:
+      eth1: Ethernet1/1
+  podconfigmapconfig:
+    intfmappingstatus:
+      eth1: Ethernet1/1
+  status: success
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: configmap-intfmapping-ceoslab-device
+  ownerReferences:
+  - apiVersion: ceoslab.arista.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: CEosLabDevice
+    name: ceoslab-device

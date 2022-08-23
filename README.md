@@ -3,15 +3,26 @@ The Arista Networks cEOS-lab operator manages containerized EOS instances in k8s
 by KNE. It is based on operator-sdk.
 
 ## Usage
-Deploy the kustomized k8s config:
+Deploy the manifest:
 ```
-kubectl apply -k https://github.com/aristanetworks/arista-ceoslab-operator/config/default
+kubectl apply -f config/kustomized/manifest.yaml
 ```
-This will pull any necessary images.
+This should be equivalent to `-k config/bases`. However, unit tests are run against the manifest
+so this is preferred.
 
-## Getting Started
-You’ll need a Kubernetes cluster to run against. You can use [KIND](https://sigs.k8s.io/kind) to get a local cluster for testing, or run against a remote cluster.
-**Note:** Your controller will automatically use the current context in your kubeconfig file (i.e. whatever cluster `kubectl cluster-info` shows).
+## Testing
+The operator uses [kuttl](https://kuttl.dev/) for testing. To run the test suite, make sure images
+of the operator and cEOS-lab are tagged as named in `kuttl-test.yaml` in the repository's root.
+Kuttl can be used either through its binary or `kubectl kuttl`.
+
+As mentioned above, these tests use the manifest file in `config/kustomized` to stage the test
+cluster (kuttl does not support kustomize). If any changes are made to the kustomization files,
+for instance, when changing the version/tag or image name in the makefile, this manifest should
+be updated by `make manifests`.
+
+## Versioning
+The git tag will match the project version defined in the Makefile and the image tag present in
+the manifest.
 
 ### How it works
 This project aims to follow the Kubernetes [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)

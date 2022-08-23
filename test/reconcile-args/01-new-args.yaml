@@ -1,0 +1,7 @@
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  args:
+    - systemd.setenv=PASSED_AS_ARGUMENT=foo

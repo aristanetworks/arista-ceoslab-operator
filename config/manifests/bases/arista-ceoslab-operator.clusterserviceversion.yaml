@@ -1,0 +1,48 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+  name: arista-ceoslab-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: CEosLabDevice is the Schema for the ceoslabdevices API
+      displayName: CEos Lab Device
+      kind: CEosLabDevice
+      name: ceoslabdevices.ceoslab.arista.com
+      version: v1alpha1
+  description: K8s operator for managing meshnet-networked cEOS-lab instances
+  displayName: arista-ceoslab-operator
+  icon:
+  - base64data: ""
+    mediatype: ""
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - KNE
+  - meshnet
+  - ceoslab
+  - Arista
+  links:
+  - name: Arista Ceoslab Operator
+    url: https://arista-ceoslab-operator.domain
+  maturity: alpha
+  provider:
+    name: Arista Networks
+    url: https://github.com/aristanetworks/arista-ceoslab-operator
+  version: 0.0.0

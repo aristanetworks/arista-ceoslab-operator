@@ -1,0 +1,8 @@
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  intfmapping:
+    eth1:
+      "Ethernet1/1"

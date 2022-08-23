@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  containers:
+  - args:
+    - systemd.setenv=CEOS=1
+    - systemd.setenv=EOS_PLATFORM=ceoslab
+    - systemd.setenv=ETBA=1
+    - systemd.setenv=FOO=bar
+    - systemd.setenv=INTFTYPE=eth
+    - systemd.setenv=SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1
+    - systemd.setenv=container=docker
+    env:
+    - name: CEOS
+      value: "1"
+    - name: EOS_PLATFORM
+      value: ceoslab
+    - name: ETBA
+      value: "1"
+    - name: FOO
+      value: bar
+    - name: INTFTYPE
+      value: eth
+    - name: SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT
+      value: "1"
+    - name: container
+      value: docker
+    name: ceos
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+status:
+  status: success

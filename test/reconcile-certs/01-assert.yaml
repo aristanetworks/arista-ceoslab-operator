@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  containers:
+  - volumeMounts:
+    - mountPath: /mnt/flash/rc.eos
+      name: volume-configmap-rceos-ceoslab-device
+      subPath: rc.eos
+    - mountPath: /mnt/flash/test-cert
+      name: volume-secret-selfsigned-ceoslab-device-0
+      subPath: test-cert
+    - mountPath: /mnt/flash/test-key
+      name: volume-secret-selfsigned-ceoslab-device-0
+      subPath: test-key
+    - mountPath: /mnt/flash/test-cert-2
+      name: volume-secret-selfsigned-ceoslab-device-1
+      subPath: test-cert-2
+    - mountPath: /mnt/flash/test-key-2
+      name: volume-secret-selfsigned-ceoslab-device-1
+      subPath: test-key-2
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    name: ceos
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+status:
+  configmapconfig:
+    selfsignedcertstatus:
+      secret-selfsigned-ceoslab-device-0:
+        certname: test-cert
+        commonname: ceoslab-device
+        keyname: test-key
+        keysize: 4096
+      secret-selfsigned-ceoslab-device-1:
+        certname: test-cert-2
+        commonname: ceoslab-device
+        keyname: test-key-2
+        keysize: 4096
+  podconfigmapconfig:
+    selfsignedcertstatus:
+      secret-selfsigned-ceoslab-device-0:
+        certname: test-cert
+        commonname: ceoslab-device
+        keyname: test-key
+        keysize: 4096
+      secret-selfsigned-ceoslab-device-1:
+        certname: test-cert-2
+        commonname: ceoslab-device
+        keyname: test-key-2
+        keysize: 4096
+  status: success
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-selfsigned-ceoslab-device-0
+  ownerReferences:
+  - apiVersion: ceoslab.arista.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: CEosLabDevice
+    name: ceoslab-device
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-selfsigned-ceoslab-device-1
+  ownerReferences:
+  - apiVersion: ceoslab.arista.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: CEosLabDevice
+    name: ceoslab-device

@@ -1,0 +1,15 @@
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  certconfig:
+    selfsignedcerts:
+    - certname: test-cert
+      keyname: test-key
+      keysize: 4096
+      commonname: ceoslab-device
+    - certname: test-cert-2
+      keyname: test-key-2
+      keysize: 4096
+      commonname: ceoslab-device

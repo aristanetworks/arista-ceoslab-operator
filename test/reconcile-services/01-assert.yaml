@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  containers:
+  - name: ceos
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+status:
+  status: success
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    pod: ceoslab-device
+  name: service-ceoslab-device
+  ownerReferences:
+  - apiVersion: ceoslab.arista.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: CEosLabDevice
+    name: ceoslab-device
+spec:
+  ports:
+  - name: foo22
+    port: 22
+    protocol: TCP
+    targetPort: 22
+  - name: foo25565
+    port: 25565
+    protocol: TCP
+    targetPort: 25565
+  selector:
+    app: ceoslab-device
+  type: LoadBalancer
