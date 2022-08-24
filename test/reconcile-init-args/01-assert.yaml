@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: ceoslab-device
+  name: ceoslab-device
+spec:
+  initContainers:
+  - args:
+    - "1"
+    - "1"
+    image: networkop/init-wait:latest
+    imagePullPolicy: IfNotPresent
+    name: init-ceoslab-device
+    resources: {}
+status:
+  containerStatuses:
+  - name: ceos
+    ready: true
+---
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+status:
+  status: success

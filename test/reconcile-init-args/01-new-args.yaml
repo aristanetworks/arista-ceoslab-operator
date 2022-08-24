@@ -1,0 +1,8 @@
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  # We can't test numinterfaces unfortunately-- the init container will wait indefinitely for the
+  # new interface to connect with its (nonexistent) peers.
+  sleep: 1
