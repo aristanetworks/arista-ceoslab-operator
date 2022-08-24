@@ -161,6 +161,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// Certificates
 	selfSignedCerts := device.Spec.CertConfig.SelfSignedCerts
+	selfSignedCertsConfed := len(selfSignedCerts) > 0
 	for i, certConfig := range selfSignedCerts {
 		name := fmt.Sprintf("secret-selfsigned-%s-%d", device.Name, i)
 		createObject := func(object client.Object) error {
@@ -189,7 +190,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	// Generate rc.eos to load certificates from /mnt/flash into in-memory filesystem
 	rcEosName := fmt.Sprintf("configmap-rceos-%s", device.Name)
-	if selfSignedCerts != nil {
+	if selfSignedCertsConfed {
 		createObject := func(object client.Object) error {
 			getRcEos(object.(*corev1.ConfigMap), selfSignedCerts)
 			configMapStatus.RcEosStale = false
@@ -207,7 +208,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// Explicit kernel device to EOS interface mapping
 	intfMapping := device.Spec.IntfMapping
 	intfMappingName := fmt.Sprintf("configmap-intfmapping-%s", device.Name)
-	if intfMapping != nil {
+	intfMappingConfed := len(intfMapping) > 0
+	if intfMappingConfed {
 		createObject := func(object client.Object) error {
 			err := getJsonIntfMapping(object.(*corev1.ConfigMap), intfMapping)
 			if err != nil {
@@ -228,7 +230,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// Feature toggle overrides
 	toggleOverrides := device.Spec.ToggleOverrides
 	toggleOverridesName := fmt.Sprintf("configmap-toggle-override-%s", device.Name)
-	if toggleOverrides != nil {
+	toggleOverridesConfed := len(toggleOverrides) > 0
+	if toggleOverridesConfed {
 		createObject := func(object client.Object) error {
 			getToggleOverrides(object.(*corev1.ConfigMap), toggleOverrides)
 			configMapStatus.ToggleOverridesStatus = toggleOverrides
@@ -289,7 +292,8 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 
 	deviceService := &corev1.Service{}
 	serviceName := fmt.Sprintf("service-%s", device.Name)
-	if device.Spec.Services != nil {
+	servicesConfed := len(device.Spec.Services) > 0
+	if servicesConfed {
 		getServiceObject := func(object client.Object) error {
 			getService(object.(*corev1.Service), device)
 			return nil
@@ -359,7 +363,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// rc.eos boot script
 	if configMapStatus.RcEosStale {
 		msg := ""
-		if selfSignedCerts != nil {
+		if selfSignedCertsConfed {
 			msg = fmt.Sprintf("rc.eos out-of-sync for CEosLabDevice %s", device.Name)
 			log.Info(msg)
 		} else {
@@ -375,7 +379,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// Explicit kernel device to EOS interface mapping
 	intfMappingStatus := configMapStatus.IntfMappingStatus
 	if intfMappingStatus != nil {
-		if intfMapping != nil {
+		if intfMappingConfed {
 			if !reflect.DeepEqual(intfMapping, intfMappingStatus) {
 				msg := fmt.Sprintf("Interface mapping out-of-sync for CEosLabDevice %s",
 					device.Name)
@@ -401,7 +405,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// EOS feature toggle overrides
 	toggleOverridesStatus := configMapStatus.ToggleOverridesStatus
 	if toggleOverridesStatus != nil {
-		if toggleOverrides != nil {
+		if toggleOverridesConfed {
 			if !reflect.DeepEqual(toggleOverrides, toggleOverridesStatus) {
 				msg := fmt.Sprintf("Toggle overrides out-of-sync for CEosLabDevice %s",
 					device.Name)
@@ -1014,6 +1018,7 @@ func getVolumeMounts(secretsAndConfigMaps map[string]client.Object) []corev1.Vol
 				filenames = append(filenames, filename)
 			}
 		}
+		sort.Strings(filenames)
 		for _, filename := range filenames {
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      volumeName(name),

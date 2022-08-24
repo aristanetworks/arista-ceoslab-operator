@@ -2,3 +2,12 @@ apiVersion: ceoslab.arista.com/v1alpha1
 kind: CEosLabDevice
 metadata:
   name: ceoslab-device
+spec:
+  envvars: {}
+  image: ""
+  args: []
+  resourcerequirements: {}
+  services: {}
+  certconfig: {}
+  intfmapping: {}
+  toggleoverrides: {}

@@ -1,0 +1,10 @@
+[
+	{"op": "replace", "path": "/spec/envvars", "value": {}},
+	{"op": "replace", "path": "/spec/image", "value": ""},
+	{"op": "replace", "path": "/spec/args", "value": []},
+	{"op": "replace", "path": "/spec/resourcerequirements", "value": {}},
+	{"op": "replace", "path": "/spec/services", "value": {}},
+	{"op": "replace", "path": "/spec/certconfig", "value": {}},
+	{"op": "replace", "path": "/spec/intfmapping", "value": {}},
+	{"op": "replace", "path": "/spec/toggleoverrides", "value": {}}
+]

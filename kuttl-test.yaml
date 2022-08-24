@@ -7,7 +7,7 @@ testDirs:
 manifestDirs:
 - config/kustomized
 kindContainers:
-- arista-ceoslab-operator:v0.1
+- arista-ceoslab-operator:v0.1.1
 - ceos:latest
 - ceos-2:latest
 skipDelete: true

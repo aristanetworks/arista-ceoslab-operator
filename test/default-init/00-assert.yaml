@@ -62,4 +62,6 @@ kind: CEosLabDevice
 metadata:
   name: ceoslab-device
 status:
+  configmapconfig: {}
+  podconfigmapconfig: {}
   status: success
