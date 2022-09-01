@@ -4,6 +4,8 @@
 	{"op": "replace", "path": "/spec/args", "value": []},
 	{"op": "replace", "path": "/spec/resourcerequirements", "value": {}},
 	{"op": "replace", "path": "/spec/services", "value": {}},
+	{"op": "replace", "path": "/spec/initcontainerimage", "value": ""},
+	{"op": "replace", "path": "/spec/sleep", "value": 0},
 	{"op": "replace", "path": "/spec/certconfig", "value": {}},
 	{"op": "replace", "path": "/spec/intfmapping", "value": {}},
 	{"op": "replace", "path": "/spec/toggleoverrides", "value": {}}

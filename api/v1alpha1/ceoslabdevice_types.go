@@ -38,6 +38,8 @@ type CEosLabDeviceSpec struct {
 	Resources map[string]string `json:"resourcerequirements,omitempty"`
 	// Port mappings for container services. Default: none
 	Services map[string]ServiceConfig `json:"services,omitempty"`
+	// Init container image name. Default: networkop/init-wait:latest
+	InitContainerImage string `json:"initcontainerimage,omitempty"`
 	// Number of data interfaces to create. An additional interface (eth0) is created for pod connectivity. Default: 0 interfaces
 	NumInterfaces uint32 `json:"numinterfaces,omitempty"`
 	// Time (in seconds) to wait before starting the device. Default: 0 seconds

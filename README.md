@@ -14,8 +14,8 @@ so this is preferred.
 
 ### Testing
 The operator uses [kuttl](https://kuttl.dev/) for testing. To run the test suite, make sure images
-of the operator and cEOS-lab are tagged as named in `kuttl-test.yaml` in the repository's root.
-Kuttl can be used either through its binary or `kubectl kuttl`.
+of the operator, cEOS-lab, and the init container are tagged as named in `kuttl-test.yaml` in the
+repository's root. Kuttl can be used either through its binary or `kubectl kuttl`.
 
 As mentioned above, these tests use the manifest file in `config/kustomized` to stage the test
 cluster (kuttl does not support kustomize). If relevant changes are made to the kustomization files

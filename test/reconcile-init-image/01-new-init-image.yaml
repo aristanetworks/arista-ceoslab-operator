@@ -2,3 +2,5 @@ apiVersion: ceoslab.arista.com/v1alpha1
 kind: CEosLabDevice
 metadata:
   name: ceoslab-device
+spec:
+  initcontainerimage: networkop/init-wait-2:latest
