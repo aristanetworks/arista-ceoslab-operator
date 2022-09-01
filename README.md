@@ -23,8 +23,8 @@ or Makefile, for instance, when changing the version/tag or image name, this man
 be updated by `make manifests`.
 
 ### Versioning
-The git tag will match the project version defined in the Makefile and the image tag present in
-the manifest.
+The git tag should match the project version defined in the Makefile, the image tag present in the
+manifest, and the image tag in `kuttl-test.yaml`.
 
 ## How it works
 This project aims to follow the Kubernetes [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
