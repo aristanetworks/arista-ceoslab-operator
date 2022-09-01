@@ -55,9 +55,9 @@ const (
 	INPROGRESS_STATE = "reconciling"
 	SUCCESS_STATE    = "success"
 
-	INIT_CONTAINER_IMAGE = "networkop/init-wait:latest"
-	CEOS_COMMAND         = "/sbin/init"
-	DEFAULT_CEOS_IMAGE   = "ceos:latest"
+	DEFAULT_INIT_CONTAINER_IMAGE = "networkop/init-wait:latest"
+	CEOS_COMMAND                 = "/sbin/init"
+	DEFAULT_CEOS_IMAGE           = "ceos:latest"
 )
 
 var (
@@ -555,7 +555,21 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod init container arguments, new: %s, old: %s",
 			device.Name, specInitContainerArgs, podInitContainerArgs)
 		log.Info(msg)
-		// Init container args can only be changed by reconciling
+		// Init container args can only be changed by restarting the pod
+		// Delete the pod, and requeue to recreate
+		r.Delete(ctx, devicePod)
+		r.updateDeviceReconciling(device, msg)
+		return requeue, nil
+	}
+
+	// Ensure the pod init container image is correct
+	specInitContainerImage := getInitContainerImage(device)
+	podInitContainerImage := initContainer.Image
+	if specInitContainerImage != podInitContainerImage {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod init container image, new: %s, old: %s",
+			device.Name, specInitContainerImage, podInitContainerImage)
+		log.Info(msg)
+		// Init container image can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
 		r.updateDeviceReconciling(device, msg)
@@ -761,6 +775,7 @@ func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndCo
 	command := getCommand(device)
 	args := getArgs(device, envVarsMap)
 	image := getImage(device)
+	initImage := getInitContainerImage(device)
 	resourceMap, err := getResourceMap(device)
 	if err != nil {
 		return err
@@ -772,7 +787,7 @@ func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndCo
 	pod.Spec = corev1.PodSpec{
 		InitContainers: []corev1.Container{{
 			Name:  fmt.Sprintf("init-%s", device.Name),
-			Image: INIT_CONTAINER_IMAGE,
+			Image: initImage,
 			Args: []string{
 				fmt.Sprintf("%d", device.Spec.NumInterfaces+1),
 				fmt.Sprintf("%d", device.Spec.Sleep),
@@ -898,6 +913,14 @@ func getInitContainerArgs(device *ceoslabv1alpha1.CEosLabDevice) []string {
 		fmt.Sprintf("%d", device.Spec.Sleep),
 	}
 	return args
+}
+
+func getInitContainerImage(device *ceoslabv1alpha1.CEosLabDevice) string {
+	image := DEFAULT_INIT_CONTAINER_IMAGE
+	if specImage := device.Spec.InitContainerImage; specImage != "" {
+		image = specImage
+	}
+	return image
 }
 
 func getResourceMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]string, error) {

@@ -73,6 +73,9 @@ spec:
               image:
                 description: 'Image name. Default: ceos:latest'
                 type: string
+              initcontainerimage:
+                description: 'Init container image name. Default: networkop/init-wait:latest'
+                type: string
               intfmapping:
                 additionalProperties:
                   type: string
