@@ -165,7 +165,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	for i, certConfig := range selfSignedCerts {
 		name := fmt.Sprintf("secret-selfsigned-%s-%d", device.Name, i)
 		createObject := func(object client.Object) error {
-			err := getSelfSignedCert(object.(*corev1.Secret), certConfig)
+			err := getSelfSignedCert(object.(*corev1.Secret), certConfig, device.Name)
 			if err != nil {
 				return err
 			}
@@ -652,7 +652,7 @@ func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEos
 
 // ConfigMaps and Secrets
 
-func getSelfSignedCert(secret *corev1.Secret, config ceoslabv1alpha1.SelfSignedCertConfig) error {
+func getSelfSignedCert(secret *corev1.Secret, config ceoslabv1alpha1.SelfSignedCertConfig, deviceName string) error {
 	key, err := rsa.GenerateKey(rand.Reader, int(config.KeySize))
 	if err != nil {
 		return err
@@ -661,13 +661,17 @@ func getSelfSignedCert(secret *corev1.Secret, config ceoslabv1alpha1.SelfSignedC
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
+	commonName := config.CommonName
+	if commonName == "" {
+		commonName = deviceName
+	}
 	template := &x509.Certificate{
 		BasicConstraintsValid: true,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		Issuer: pkix.Name{
+		Subject: pkix.Name{
 			Organization: []string{"Arista Networks"},
-			CommonName:   config.CommonName,
+			CommonName:   commonName,
 		},
 		SerialNumber: big.NewInt(1),
 		NotBefore:    time.Now(),
