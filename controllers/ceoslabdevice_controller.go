@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -1073,26 +1074,36 @@ func getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) 
 	return
 }
 
-func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]uint32 {
-	serviceMap := map[string]uint32{}
+func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]ceoslabv1alpha1.PortConfig {
+	serviceMap := map[string]ceoslabv1alpha1.PortConfig{}
 	for service, serviceConfig := range device.Spec.Services {
-		for _, tcpPort := range serviceConfig.TCPPorts {
-			serviceName := strings.ToLower(fmt.Sprintf("%s%d", service, tcpPort))
-			serviceMap[serviceName] = tcpPort
+		for _, portConfig := range serviceConfig.TCPPorts {
+			effectivePortConfig := portConfig
+			if out := portConfig.Out; out == 0 {
+				// Outside port not set, default to inside.
+				effectivePortConfig.Out = portConfig.In
+			}
+			serviceName := strings.ToLower(fmt.Sprintf("%s%d", service, portConfig.In))
+			serviceMap[serviceName] = effectivePortConfig
 		}
 	}
 	return serviceMap
 }
 
-func getServiceMapFromK8sAPI(service *corev1.Service) map[string]uint32 {
-	serviceMap := map[string]uint32{}
+func getServiceMapFromK8sAPI(service *corev1.Service) map[string]ceoslabv1alpha1.PortConfig {
+	serviceMap := map[string]ceoslabv1alpha1.PortConfig{}
 	for _, v := range service.Spec.Ports {
-		serviceMap[v.Name] = uint32(v.Port)
+		serviceMap[v.Name] = ceoslabv1alpha1.PortConfig{
+			// We always set TargetPort and Port (see getServiceMap) so we can pull
+			// out these values naively.
+			In:  uint32(v.TargetPort.IntValue()),
+			Out: uint32(v.Port),
+		}
 	}
 	return serviceMap
 }
 
-func getServicePortsAPI(serviceMap map[string]uint32) []corev1.ServicePort {
+func getServicePortsAPI(serviceMap map[string]ceoslabv1alpha1.PortConfig) []corev1.ServicePort {
 	services := []string{}
 	for service := range serviceMap {
 		services = append(services, service)
@@ -1106,7 +1117,10 @@ func getServicePortsAPI(serviceMap map[string]uint32) []corev1.ServicePort {
 		ports = append(ports, corev1.ServicePort{
 			Name:     serviceName,
 			Protocol: corev1.ProtocolTCP,
-			Port:     int32(servicePort),
+			// We always set TargetPort and Port (see getServiceMap) so we can push
+			// in these values naively.
+			Port:       int32(servicePort.Out),
+			TargetPort: intstr.FromInt(int(servicePort.In)),
 		})
 	}
 	return ports

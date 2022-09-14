@@ -34,7 +34,7 @@ metadata:
 spec:
   ports:
   - name: foo22
-    port: 22
+    port: 2022
     protocol: TCP
     targetPort: 22
   - name: foo25565

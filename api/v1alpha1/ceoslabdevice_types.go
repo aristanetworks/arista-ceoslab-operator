@@ -54,7 +54,14 @@ type CEosLabDeviceSpec struct {
 
 type ServiceConfig struct {
 	// TCP ports to forward to the pod.
-	TCPPorts []uint32 `json:"tcpports,omitempty"`
+	TCPPorts []PortConfig `json:"tcpports,omitempty"`
+}
+
+type PortConfig struct {
+	// Port inside the container.
+	In uint32 `json:"in,omitempty"`
+	// Port outside the container. Defaults to the same as in.
+	Out uint32 `json:"out,omitempty"`
 }
 
 type CertConfig struct {
@@ -121,8 +128,4 @@ type CEosLabDeviceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CEosLabDevice `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&CEosLabDevice{}, &CEosLabDeviceList{})
 }
