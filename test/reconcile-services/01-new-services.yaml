@@ -6,5 +6,6 @@ spec:
   services:
     foo:
       tcpports:
-        - 22
-        - 25565
+        - in: 22
+          out: 2022
+        - in: 25565

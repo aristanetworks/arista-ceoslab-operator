@@ -99,8 +99,17 @@ spec:
                     tcpports:
                       description: TCP ports to forward to the pod.
                       items:
-                        format: int32
-                        type: integer
+                        properties:
+                          in:
+                            description: Port inside the container.
+                            format: int32
+                            type: integer
+                          out:
+                            description: Port outside the container. Defaults to the
+                              same as in.
+                            format: int32
+                            type: integer
+                        type: object
                       type: array
                   type: object
                 description: 'Port mappings for container services. Default: none'
