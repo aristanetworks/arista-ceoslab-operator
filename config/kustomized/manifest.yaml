@@ -482,7 +482,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: ghcr.io/aristanetworks/arista-ceoslab-operator:v1.0.0
+        image: ghcr.io/aristanetworks/arista-ceoslab-operator:v1.0.2
         livenessProbe:
           httpGet:
             path: /healthz

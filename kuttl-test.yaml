@@ -7,7 +7,7 @@ testDirs:
 manifestDirs:
 - config/kustomized
 kindContainers:
-- ghcr.io/aristanetworks/arista-ceoslab-operator:v1.0.0
+- ghcr.io/aristanetworks/arista-ceoslab-operator:v1.0.2
 - ceos:latest
 - ceos-2:latest
 - networkop/init-wait:latest
