@@ -50,6 +50,8 @@ type CEosLabDeviceSpec struct {
 	IntfMapping map[string]string `json:"intfmapping,omitempty"`
 	// EOS feature toggle overrides
 	ToggleOverrides map[string]bool `json:"toggleoverrides,omitempty"`
+	// EOS agents to for the startup probe to block on
+	WaitForAgents []string `json:"waitforagents,omitempty"`
 }
 
 type ServiceConfig struct {

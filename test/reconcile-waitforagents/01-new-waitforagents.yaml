@@ -1,0 +1,9 @@
+apiVersion: ceoslab.arista.com/v1alpha1
+kind: CEosLabDevice
+metadata:
+  name: ceoslab-device
+spec:
+  waitforagents:
+    # These agents are always running
+    - ConfigAgent
+    - Sysdb
