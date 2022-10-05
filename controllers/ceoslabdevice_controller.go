@@ -581,7 +581,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	specServiceMap := getServiceMap(device)
 	containerServiceMap := getServiceMapFromK8sAPI(deviceService)
 	if !reflect.DeepEqual(specServiceMap, containerServiceMap) {
-		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old; %v",
+		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old: %v",
 			device.Name, specServiceMap, containerServiceMap)
 		log.Info(msg)
 		// We could update services in place but this would make it harder to handle
@@ -593,6 +593,22 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		return requeue, nil
 	}
 
+	// Ensure startup probe agents are the same as the spec
+	specWaitForAgents := device.Spec.WaitForAgents
+	containerWaitForAgents := getWaitForAgentsFromK8sAPI(container.StartupProbe)
+	confed := len(specWaitForAgents)+len(containerWaitForAgents) > 0
+	if confed && !reflect.DeepEqual(specWaitForAgents, containerWaitForAgents) {
+		msg := fmt.Sprintf("Updating CEosLabDevice %s agents to wait for at boot, new %v, old: %v:",
+			device.Name, specWaitForAgents, containerWaitForAgents)
+		log.Info(msg)
+		// Update pod
+		// Pod args can only be changed by restarting the pod
+		// Delete the pod, and requeue to recreate
+		// At this point it's getting a bit silly, but let's keep the standard.
+		r.Delete(ctx, devicePod)
+		r.updateDeviceReconciling(device, msg)
+		return requeue, nil
+	}
 	// Device reconciled
 	log.Info(fmt.Sprintf("CEosLabDevice %s reconciled", device.Name))
 	r.updateDeviceSuccess(device)
@@ -699,7 +715,7 @@ func getRcEos(configMap *corev1.ConfigMap, configs []ceoslabv1alpha1.SelfSignedC
 	// literal carriage returns. Sample output:
 	// #!/bin/bash
 	// {
-	// wfw
+	// wfw ConfigAgent
 	// Cli -Ac 'enable
 	// copy file:/mnt/flash/cert.pem certificate:cert.pem
 	// copy file:/mnt/flash/key.pem sslkey:key.pem
@@ -711,7 +727,7 @@ func getRcEos(configMap *corev1.ConfigMap, configs []ceoslabv1alpha1.SelfSignedC
 	}
 	writeLn("#!/bin/bash")
 	writeLn("{")
-	writeLn("wfw")
+	writeLn("wfw ConfigAgent")
 	writeLn("Cli -Ac 'enable")
 	for _, certConfig := range configs {
 		writeLn(fmt.Sprintf("copy file:/mnt/flash/%s certificate:%s",
@@ -788,6 +804,7 @@ func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndCo
 	volumes := getVolumes(secretsAndConfigMaps)
 	volumeMounts := getVolumeMounts(secretsAndConfigMaps)
 	resources := getResourcesAPI(resourceMap)
+	startupProbe := getStartupProbeAPI(device)
 	pod.ObjectMeta.Labels = labels
 	pod.Spec = corev1.PodSpec{
 		InitContainers: []corev1.Container{{
@@ -811,17 +828,7 @@ func getPod(pod *corev1.Pod, device *ceoslabv1alpha1.CEosLabDevice, secretsAndCo
 			// Run container in privileged mode
 			SecurityContext: &corev1.SecurityContext{Privileged: pointer.Bool(true)},
 			// Check if agents are warm
-			StartupProbe: &corev1.Probe{
-				ProbeHandler: corev1.ProbeHandler{
-					Exec: &corev1.ExecAction{
-						Command: []string{"wfw", "-t", "5"},
-					},
-				},
-				TimeoutSeconds: 5,
-				PeriodSeconds:  5,
-				// Try for up to a minute
-				FailureThreshold: 12,
-			},
+			StartupProbe: startupProbe,
 		}},
 		TerminationGracePeriodSeconds: pointer.Int64(0),
 		Volumes:                       volumes,
@@ -1056,6 +1063,28 @@ func getVolumeMounts(secretsAndConfigMaps map[string]client.Object) []corev1.Vol
 		}
 	}
 	return mounts
+}
+
+func getStartupProbeAPI(device *ceoslabv1alpha1.CEosLabDevice) *corev1.Probe {
+	agents := device.Spec.WaitForAgents
+	command := append([]string{"wfw", "-t", "5"}, agents...)
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: command,
+			},
+		},
+		TimeoutSeconds: 5,
+		PeriodSeconds:  5,
+		// Try for up to a minute
+		FailureThreshold: 12,
+	}
+}
+
+func getWaitForAgentsFromK8sAPI(startupProbe *corev1.Probe) []string {
+	command := startupProbe.ProbeHandler.Exec.Command
+	// [ "wfw", "-t", "5", agents... ]
+	return command[3:]
 }
 
 // Services
