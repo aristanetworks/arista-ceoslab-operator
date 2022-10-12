@@ -124,6 +124,11 @@ spec:
                   type: boolean
                 description: EOS feature toggle overrides
                 type: object
+              waitforagents:
+                description: EOS agents to for the startup probe to block on
+                items:
+                  type: string
+                type: array
             type: object
           status:
             description: CEosLabDeviceStatus defines the observed state of CEosLabDevice

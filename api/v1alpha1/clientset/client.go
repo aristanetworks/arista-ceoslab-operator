@@ -18,27 +18,19 @@ package clientset
 
 import (
 	"context"
+
 	"github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
+	intf "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1/client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	//"k8s.io/apimachinery/pkg/runtime/schema"
-	//"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 )
 
-type CEosLabDeviceV1Alpha1Interface interface {
-	CEosLabDevices(namespace string) CEosLabDeviceInterface
-}
-
 type CEosLabDeviceV1Alpha1Client struct {
 	restClient rest.Interface
 }
-
-var (
-	_ CEosLabDeviceV1Alpha1Interface = (*CEosLabDeviceV1Alpha1Client)(nil)
-)
 
 func NewForConfig(c *rest.Config) (*CEosLabDeviceV1Alpha1Client, error) {
 	config := *c
@@ -55,20 +47,11 @@ func NewForConfig(c *rest.Config) (*CEosLabDeviceV1Alpha1Client, error) {
 	return &CEosLabDeviceV1Alpha1Client{restClient: client}, nil
 }
 
-func (c *CEosLabDeviceV1Alpha1Client) CEosLabDevices(namespace string) CEosLabDeviceInterface {
+func (c *CEosLabDeviceV1Alpha1Client) CEosLabDevices(namespace string) intf.CEosLabDeviceOpsInterface {
 	return &ceosLabDeviceClient{
 		restClient: c.restClient,
 		ns:         namespace,
 	}
-}
-
-type CEosLabDeviceInterface interface {
-	List(ctx context.Context, opts metav1.ListOptions) (*v1alpha1.CEosLabDeviceList, error)
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1alpha1.CEosLabDevice, error)
-	Create(ctx context.Context, device *v1alpha1.CEosLabDevice, opts metav1.CreateOptions) (*v1alpha1.CEosLabDevice, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1alpha1.CEosLabDevice, err error)
 }
 
 type ceosLabDeviceClient struct {
@@ -77,7 +60,8 @@ type ceosLabDeviceClient struct {
 }
 
 var (
-	_ CEosLabDeviceInterface = (*ceosLabDeviceClient)(nil)
+	_ intf.CEosLabDeviceV1Alpha1Interface = (*CEosLabDeviceV1Alpha1Client)(nil)
+	_ intf.CEosLabDeviceOpsInterface      = (*ceosLabDeviceClient)(nil)
 )
 
 func resource() string {

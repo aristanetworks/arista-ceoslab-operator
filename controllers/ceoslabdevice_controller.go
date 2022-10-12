@@ -606,9 +606,11 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Delete the pod, and requeue to recreate
 		// At this point it's getting a bit silly, but let's keep the standard.
 		r.Delete(ctx, devicePod)
+		// Update status
 		r.updateDeviceReconciling(device, msg)
 		return requeue, nil
 	}
+
 	// Device reconciled
 	log.Info(fmt.Sprintf("CEosLabDevice %s reconciled", device.Name))
 	r.updateDeviceSuccess(device)
