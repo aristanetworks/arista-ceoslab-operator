@@ -27,11 +27,19 @@ import (
 )
 
 var (
-	// GroupVersionResource is used to register and type these objects with the dynamic client
-	GroupVersionResource = schema.GroupVersionResource{Group: "ceoslab.arista.com", Version: "v1alpha1", Resource: "ceoslabdevices"}
+	group    = "ceoslab.arista.com"
+	version  = "v1alpha1"
+	resource = "ceoslabdevices"
+	kind     = "CEosLabDevice"
+
+	// GroupVersionResource is used to register and type these objects
+	GroupVersionResource = schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+
+	// Used by the dynamic client to create a new device (Kind)
+	GroupVersionKind = schema.GroupVersionKind{Group: group, Version: version, Kind: kind}
 
 	// GroupVersion is group version used to register these objects
-	GroupVersion = GroupVersionResource.GroupVersion()
+	GroupVersion = schema.GroupVersion{Group: group, Version: version}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
