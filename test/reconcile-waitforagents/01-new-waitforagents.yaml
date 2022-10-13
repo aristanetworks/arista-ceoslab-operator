@@ -4,6 +4,5 @@ metadata:
   name: ceoslab-device
 spec:
   waitforagents:
-    # These agents are always running
     - ConfigAgent
     - Sysdb
