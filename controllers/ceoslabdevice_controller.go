@@ -1076,10 +1076,10 @@ func getStartupProbeAPI(device *ceoslabv1alpha1.CEosLabDevice) *corev1.Probe {
 				Command: command,
 			},
 		},
+		// Try to boot for up to two minutes
 		TimeoutSeconds: 5,
 		PeriodSeconds:  5,
-		// Try for up to a minute
-		FailureThreshold: 12,
+		FailureThreshold: 24,
 	}
 }
 
