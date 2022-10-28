@@ -1127,8 +1127,8 @@ func getServiceMapFromK8sAPI(service *corev1.Service) map[string]ceoslabv1alpha1
 		serviceMap[v.Name] = ceoslabv1alpha1.PortConfig{
 			// We always set TargetPort and Port (see getServiceMap) so we can pull
 			// out these values naively.
-			In:  uint32(v.TargetPort.IntValue()),
-			Out: uint32(v.Port),
+			In:  int32(v.TargetPort.IntValue()),
+			Out: int32(v.Port),
 		}
 	}
 	return serviceMap

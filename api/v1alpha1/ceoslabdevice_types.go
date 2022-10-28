@@ -41,9 +41,9 @@ type CEosLabDeviceSpec struct {
 	// Init container image name. Default: networkop/init-wait:latest
 	InitContainerImage string `json:"initcontainerimage,omitempty"`
 	// Number of data interfaces to create. An additional interface (eth0) is created for pod connectivity. Default: 0 interfaces
-	NumInterfaces uint32 `json:"numinterfaces,omitempty"`
+	NumInterfaces int32 `json:"numinterfaces,omitempty"`
 	// Time (in seconds) to wait before starting the device. Default: 0 seconds
-	Sleep uint32 `json:"sleep,omitempty"`
+	Sleep int32 `json:"sleep,omitempty"`
 	// X.509 certificate configuration.
 	CertConfig CertConfig `json:"certconfig,omitempty"`
 	// Explicit interface mapping between kernel devices and interface names. If this is defined, any unmapped devices are ignored.
@@ -61,9 +61,9 @@ type ServiceConfig struct {
 
 type PortConfig struct {
 	// Port inside the container.
-	In uint32 `json:"in,omitempty"`
+	In int32 `json:"in,omitempty"`
 	// Port outside the container. Defaults to the same as in.
-	Out uint32 `json:"out,omitempty"`
+	Out int32 `json:"out,omitempty"`
 }
 
 type CertConfig struct {
@@ -77,7 +77,7 @@ type SelfSignedCertConfig struct {
 	// Key name on the node.
 	KeyName string `json:"keyname,omitempty"`
 	// RSA keysize to use for key generation.
-	KeySize uint32 `json:"keysize,omitempty"`
+	KeySize int32 `json:"keysize,omitempty"`
 	// Common name to set in the cert.
 	CommonName string `json:"commonname,omitempty"`
 }
