@@ -17,8 +17,8 @@ limitations under the License.
 package fake
 
 import (
-	"github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
-	"github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1/dynamic"
+	"github.com/aristanetworks/arista-ceoslab-operator/v2/api/v1alpha1"
+	"github.com/aristanetworks/arista-ceoslab-operator/v2/api/v1alpha1/dynamic"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakeclient "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/rest"

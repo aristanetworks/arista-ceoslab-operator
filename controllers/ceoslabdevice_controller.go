@@ -34,7 +34,7 @@ import (
 	"strings"
 	"time"
 
-	ceoslabv1alpha1 "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
+	ceoslabv1alpha1 "github.com/aristanetworks/arista-ceoslab-operator/v2/api/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -1077,8 +1077,8 @@ func getStartupProbeAPI(device *ceoslabv1alpha1.CEosLabDevice) *corev1.Probe {
 			},
 		},
 		// Try to boot for up to two minutes
-		TimeoutSeconds: 5,
-		PeriodSeconds:  5,
+		TimeoutSeconds:   5,
+		PeriodSeconds:    5,
 		FailureThreshold: 24,
 	}
 }
@@ -1127,8 +1127,8 @@ func getServiceMapFromK8sAPI(service *corev1.Service) map[string]ceoslabv1alpha1
 		serviceMap[v.Name] = ceoslabv1alpha1.PortConfig{
 			// We always set TargetPort and Port (see getServiceMap) so we can pull
 			// out these values naively.
-			In:  uint32(v.TargetPort.IntValue()),
-			Out: uint32(v.Port),
+			In:  int32(v.TargetPort.IntValue()),
+			Out: int32(v.Port),
 		}
 	}
 	return serviceMap

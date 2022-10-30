@@ -54,6 +54,7 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&CEosLabDeviceList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
+	metav1.AddMetaToScheme(scheme)
 	return nil
 }
 

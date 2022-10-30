@@ -30,7 +30,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	ceoslabv1alpha1 "github.com/aristanetworks/arista-ceoslab-operator/api/v1alpha1"
+	ceoslabv1alpha1 "github.com/aristanetworks/arista-ceoslab-operator/v2/api/v1alpha1"
 	//+kubebuilder:scaffold:imports
 )
 

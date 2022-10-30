@@ -13,4 +13,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/aristanetworks/arista-ceoslab-operator
-  newTag: v1.1.0
+  newTag: v2.0.1
