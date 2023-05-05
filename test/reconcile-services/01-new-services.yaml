@@ -9,3 +9,9 @@ spec:
         - in: 22
           out: 2022
         - in: 25565
+    gnmi:
+      tcpports:
+        - in: 6030
+    gnoi:
+      tcpports:
+        - in: 6030
