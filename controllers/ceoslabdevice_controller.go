@@ -296,7 +296,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	servicesConfed := len(device.Spec.Services) > 0
 	if servicesConfed {
 		getServiceObject := func(object client.Object) error {
-			getService(object.(*corev1.Service), device)
+			err := getService(object.(*corev1.Service), device)
+			if err != nil {
+				return err
+			}
 			return nil
 		}
 		isNewObject, err := r.getOrCreateObject(device, serviceName, getServiceObject, deviceService)
@@ -578,7 +581,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	}
 
 	// Ensure services are the same as the spec
-	specServiceMap := getServiceMap(device)
+	specServiceMap, err := getServiceMap(device)
+	if err != nil {
+		return noRequeue, err
+	}
 	containerServiceMap := getServiceMapFromK8sAPI(deviceService)
 	if !reflect.DeepEqual(specServiceMap, containerServiceMap) {
 		msg := fmt.Sprintf("Updating CEosLabDevice %s pod services, new: %v, old: %v",
@@ -1091,8 +1097,11 @@ func getWaitForAgentsFromK8sAPI(startupProbe *corev1.Probe) []string {
 
 // Services
 
-func getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) {
-	serviceMap := getServiceMap(device)
+func getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) error {
+	serviceMap, err := getServiceMap(device)
+	if err != nil {
+		return err
+	}
 	servicePorts := getServicePortsAPI(serviceMap)
 	service.ObjectMeta.Labels = map[string]string{"pod": device.Name}
 	service.Spec = corev1.ServiceSpec{
@@ -1102,23 +1111,52 @@ func getService(service *corev1.Service, device *ceoslabv1alpha1.CEosLabDevice) 
 		},
 		Type: "LoadBalancer",
 	}
-	return
+	return nil
 }
 
-func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) map[string]ceoslabv1alpha1.PortConfig {
+func getServiceMap(device *ceoslabv1alpha1.CEosLabDevice) (map[string]ceoslabv1alpha1.PortConfig, error) {
 	serviceMap := map[string]ceoslabv1alpha1.PortConfig{}
-	for service, serviceConfig := range device.Spec.Services {
+	// Handle services in a deterministic order in case we ignore a service that shares a port with
+	// another. Otherwise a future reconcilation may elide a different one and create a discrepancy.
+	serviceNames := []string{}
+	for service := range device.Spec.Services {
+		serviceNames = append(serviceNames, service)
+	}
+	sort.Strings(serviceNames)
+	portMappingOutIn := map[int32]int32{}
+	portMappingInOut := map[int32]int32{}
+	for _, service := range serviceNames {
+		serviceConfig := device.Spec.Services[service]
 		for _, portConfig := range serviceConfig.TCPPorts {
 			effectivePortConfig := portConfig
 			if out := portConfig.Out; out == 0 {
 				// Outside port not set, default to inside.
 				effectivePortConfig.Out = portConfig.In
 			}
-			serviceName := strings.ToLower(fmt.Sprintf("%s%d", service, portConfig.In))
+			// Check if we've already forwarded this port
+			in, present := portMappingOutIn[effectivePortConfig.Out]
+			if present && in != effectivePortConfig.In {
+				// We already mapped this outside port to a different inside port
+				return nil, fmt.Errorf("Service %s wants to map outside port %d to %d but it's already mapped to %d",
+					service, effectivePortConfig.Out, effectivePortConfig.In, in)
+			}
+			out, present := portMappingInOut[effectivePortConfig.In]
+			if present && out != effectivePortConfig.Out {
+				// Wr aleady mapped this inside port to a different outside port
+				return nil, fmt.Errorf("Service %s wants to map inside port %d to %d but it's already mapped to %d",
+					service, effectivePortConfig.In, effectivePortConfig.Out, out)
+			}
+			if present {
+				// Two services have the same port mapping. This is OK, we just need to ignore this one.
+				continue
+			}
+			portMappingOutIn[effectivePortConfig.Out] = effectivePortConfig.In
+			portMappingInOut[effectivePortConfig.In] = effectivePortConfig.Out
+			serviceName := strings.ToLower(fmt.Sprintf("%s%d", service, effectivePortConfig.In))
 			serviceMap[serviceName] = effectivePortConfig
 		}
 	}
-	return serviceMap
+	return serviceMap, nil
 }
 
 func getServiceMapFromK8sAPI(service *corev1.Service) map[string]ceoslabv1alpha1.PortConfig {

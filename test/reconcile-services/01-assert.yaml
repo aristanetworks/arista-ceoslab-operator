@@ -41,6 +41,11 @@ spec:
     port: 25565
     protocol: TCP
     targetPort: 25565
+  - name: gnmi6030
+    port: 6030
+    protocol: TCP
+    targetPort: 6030
+    # gNOI port ignored because it's the same as gNMI
   selector:
     app: ceoslab-device
   type: LoadBalancer
