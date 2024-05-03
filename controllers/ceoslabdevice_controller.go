@@ -29,6 +29,7 @@ import (
 	"math/big"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,16 +40,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/runtime"
+	apiRuntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	rctrl "sigs.k8s.io/controller-runtime/pkg/controller"
 	kLog "sigs.k8s.io/controller-runtime/pkg/log"
-
-	"github.com/go-logr/logr"
 )
 
 const (
@@ -75,33 +75,30 @@ var (
 	noRequeue  = ctrl.Result{}
 	ethIntfRe  = regexp.MustCompile(`^Ethernet\d+(?:/\d+)?(?:/\d+)?$`)
 	mgmtIntfRe = regexp.MustCompile(`^Management\d+(?:/\d+)?$`)
-
-	ctx context.Context
-	log logr.Logger
 )
 
 // CEosLabDeviceReconciler reconciles a CEosLabDevice object
 type CEosLabDeviceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme *apiRuntime.Scheme
 }
 
 // Helpers for updating status
-func (r *CEosLabDeviceReconciler) updateDeviceFail(device *ceoslabv1alpha1.CEosLabDevice, errMsg string) {
+func (r *CEosLabDeviceReconciler) updateDeviceFail(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice, errMsg string) {
 	device.Status.State = FAILED_STATE
 	device.Status.Reason = errMsg
 	r.Status().Update(ctx, device)
 	r.Update(ctx, device)
 }
 
-func (r *CEosLabDeviceReconciler) updateDeviceReconciling(device *ceoslabv1alpha1.CEosLabDevice, msg string) {
+func (r *CEosLabDeviceReconciler) updateDeviceReconciling(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice, msg string) {
 	device.Status.State = INPROGRESS_STATE
 	device.Status.Reason = msg
 	r.Status().Update(ctx, device)
 	r.Update(ctx, device)
 }
 
-func (r *CEosLabDeviceReconciler) updateDeviceSuccess(device *ceoslabv1alpha1.CEosLabDevice) {
+func (r *CEosLabDeviceReconciler) updateDeviceSuccess(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice) {
 	device.Status.State = SUCCESS_STATE
 	device.Status.Reason = ""
 	r.Status().Update(ctx, device)
@@ -122,9 +119,8 @@ func (r *CEosLabDeviceReconciler) updateDeviceSuccess(device *ceoslabv1alpha1.CE
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.2/pkg/reconcile
-func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Request) (ctrl.Result, error) {
-	ctx = ctx_
-	log = kLog.FromContext(ctx)
+func (r *CEosLabDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := kLog.FromContext(ctx)
 
 	// Fetch the CEosLabDevice instance
 	device := &ceoslabv1alpha1.CEosLabDevice{}
@@ -147,8 +143,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 	// and possibly a set of services (if configured in the spec).
 
 	// The error handling for creating and pushing k8s resources is very repetitive so it's
-	// been factored out. Requeue if we create any new objects to check that we get them back.
-	haveNewObjects := false
+	// been factored out.
 
 	// ConfigMaps and Secrets
 
@@ -180,11 +175,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return nil
 		}
 		secret := &corev1.Secret{}
-		isNewObject, err := r.getOrCreateObject(device, name, createObject, secret)
+		err := r.getOrCreateObject(ctx, device, name, createObject, secret)
 		if err != nil {
 			return noRequeue, err
 		}
-		haveNewObjects = haveNewObjects || isNewObject
 		secretsAndConfigMaps[name] = secret
 		selfSignedCertConfigs[name] = certConfig
 	}
@@ -198,11 +192,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
-		isNewObject, err := r.getOrCreateObject(device, rcEosName, createObject, configMap)
+		err := r.getOrCreateObject(ctx, device, rcEosName, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
-		haveNewObjects = haveNewObjects || isNewObject
 		secretsAndConfigMaps[rcEosName] = configMap
 	}
 
@@ -220,11 +213,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
-		isNewObject, err := r.getOrCreateObject(device, intfMappingName, createObject, configMap)
+		err := r.getOrCreateObject(ctx, device, intfMappingName, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
-		haveNewObjects = haveNewObjects || isNewObject
 		secretsAndConfigMaps[intfMappingName] = configMap
 	}
 
@@ -239,11 +231,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			return nil
 		}
 		configMap := &corev1.ConfigMap{}
-		isNewObject, err := r.getOrCreateObject(device, toggleOverridesName, createObject, configMap)
+		err := r.getOrCreateObject(ctx, device, toggleOverridesName, createObject, configMap)
 		if err != nil {
 			return noRequeue, err
 		}
-		haveNewObjects = haveNewObjects || isNewObject
 		secretsAndConfigMaps[toggleOverridesName] = configMap
 	}
 
@@ -256,7 +247,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		if err != nil && !errors.IsNotFound(err) {
 			errMsg := fmt.Sprintf("Failed to get %s for CEosLabDevice %s", startupConfigName, device.Name)
 			log.Error(err, errMsg)
-			r.updateDeviceFail(device, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
 			return noRequeue, err
 		} else if err == nil {
 			// KNE created the configmap
@@ -282,11 +273,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			(&device.Status.ConfigMapStatus).DeepCopyInto(&device.Status.PodConfigMapStatus)
 			return nil
 		}
-		isNewObject, err := r.getOrCreateObject(device, podName, createPodObject, devicePod)
+		err := r.getOrCreateObject(ctx, device, podName, createPodObject, devicePod)
 		if err != nil {
 			return noRequeue, err
 		}
-		haveNewObjects = haveNewObjects || isNewObject
 	}
 
 	// Services
@@ -302,19 +292,10 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			}
 			return nil
 		}
-		isNewObject, err := r.getOrCreateObject(device, serviceName, getServiceObject, deviceService)
+		err := r.getOrCreateObject(ctx, device, serviceName, getServiceObject, deviceService)
 		if err != nil {
 			return noRequeue, err
 		}
-		haveNewObjects = haveNewObjects || isNewObject
-	}
-
-	if haveNewObjects {
-		// We created new objects. As a sanity test, requeue to make sure we pick them back up.
-		msg := fmt.Sprintf("Created k8s objects for CEosLabDevice %s", device.Name)
-		log.Info(msg)
-		r.updateDeviceReconciling(device, msg)
-		return requeue, nil
 	}
 
 	// Reconcile observed state against desired state
@@ -328,7 +309,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		} else if err != nil && !errors.IsNotFound(err) {
 			errMsg := fmt.Sprintf("Could not delete %s for CEosLabDevice %s", name, device.Name)
 			log.Error(err, errMsg)
-			r.updateDeviceFail(device, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
 			return err
 		}
 		return nil
@@ -342,7 +323,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			log.Info(msg)
 			configMapStatus.RcEosStale = true
 			doDeleteConfigMap(name, &corev1.Secret{})
-			r.updateDeviceReconciling(device, msg)
+			r.updateDeviceReconciling(ctx, device, msg)
 			return requeue, nil
 		}
 	}
@@ -359,7 +340,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			if err != nil {
 				return noRequeue, err
 			}
-			r.updateDeviceReconciling(device, msg)
+			r.updateDeviceReconciling(ctx, device, msg)
 			return requeue, nil
 		}
 	}
@@ -376,7 +357,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			configMapStatus.RcEosStale = false
 		}
 		doDeleteConfigMap(rcEosName, &corev1.ConfigMap{})
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -389,7 +370,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 					device.Name)
 				log.Info(msg)
 				doDeleteConfigMap(intfMappingName, &corev1.ConfigMap{})
-				r.updateDeviceReconciling(device, msg)
+				r.updateDeviceReconciling(ctx, device, msg)
 				return requeue, nil
 			}
 		} else {
@@ -401,7 +382,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			if err != nil {
 				return noRequeue, err
 			}
-			r.updateDeviceReconciling(device, msg)
+			r.updateDeviceReconciling(ctx, device, msg)
 			return requeue, nil
 		}
 	}
@@ -415,7 +396,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 					device.Name)
 				log.Info(msg)
 				doDeleteConfigMap(toggleOverridesName, &corev1.ConfigMap{})
-				r.updateDeviceReconciling(device, msg)
+				r.updateDeviceReconciling(ctx, device, msg)
 				return requeue, nil
 			}
 		} else {
@@ -427,7 +408,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			if err != nil {
 				return noRequeue, err
 			}
-			r.updateDeviceReconciling(device, msg)
+			r.updateDeviceReconciling(ctx, device, msg)
 			return requeue, nil
 		}
 	}
@@ -444,7 +425,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 				configMapStatus.StartupConfigResourceVersion = startupConfigResourceVersion
 				msg := fmt.Sprintf("Startup-config out-of-sync for CEosLabDevice %s", device.Name)
 				log.Info(msg)
-				r.updateDeviceReconciling(device, msg)
+				r.updateDeviceReconciling(ctx, device, msg)
 				return requeue, nil
 			}
 		} else {
@@ -453,7 +434,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 			configMapStatus.StartupConfigResourceVersion = nil
 			msg := fmt.Sprintf("Startup-config deleted from CEosLabDevice %s", device.Name)
 			log.Info(msg)
-			r.updateDeviceReconciling(device, msg)
+			r.updateDeviceReconciling(ctx, device, msg)
 			return requeue, nil
 		}
 	}
@@ -467,7 +448,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// These configmaps are required at boot time so we need to restart the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -482,7 +463,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		devicePod.ObjectMeta.Labels = labels
 		r.Update(ctx, devicePod)
 		// Update status
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -497,7 +478,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Environment variables can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -511,7 +492,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Image can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -522,7 +503,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		errMsg := fmt.Sprintf("Failed to validate CEosLabDevice %s pod requirements, new: %v, old: %v",
 			device.Name, device.Spec.Resources, containerResourceRequirements)
 		log.Error(err, errMsg)
-		r.updateDeviceFail(device, errMsg)
+		r.updateDeviceFail(ctx, device, errMsg)
 		return noRequeue, nil
 	}
 	if !reflect.DeepEqual(specResourceRequirements, containerResourceRequirements) {
@@ -532,7 +513,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Resource requirements can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -547,7 +528,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Pod args can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -562,7 +543,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Init container args can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -576,7 +557,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// Init container image can only be changed by restarting the pod
 		// Delete the pod, and requeue to recreate
 		r.Delete(ctx, devicePod)
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -595,7 +576,7 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// comparatively minimal.
 		r.Delete(ctx, deviceService)
 		// Update status
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
@@ -613,13 +594,13 @@ func (r *CEosLabDeviceReconciler) Reconcile(ctx_ context.Context, req ctrl.Reque
 		// At this point it's getting a bit silly, but let's keep the standard.
 		r.Delete(ctx, devicePod)
 		// Update status
-		r.updateDeviceReconciling(device, msg)
+		r.updateDeviceReconciling(ctx, device, msg)
 		return requeue, nil
 	}
 
 	// Device reconciled
 	log.Info(fmt.Sprintf("CEosLabDevice %s reconciled", device.Name))
-	r.updateDeviceSuccess(device)
+	r.updateDeviceSuccess(ctx, device)
 	return noRequeue, nil
 }
 
@@ -631,6 +612,9 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
+		WithOptions(rctrl.Options{
+			MaxConcurrentReconciles: runtime.NumCPU(),
+		}).
 		Complete(r)
 }
 
@@ -638,8 +622,8 @@ func (r *CEosLabDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 type makeObjectFn func(client.Object) error
 
-func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEosLabDevice, name string, makeObject makeObjectFn, object client.Object) (bool, error) {
-	isNewObject := false
+func (r *CEosLabDeviceReconciler) getOrCreateObject(ctx context.Context, device *ceoslabv1alpha1.CEosLabDevice, name string, makeObject makeObjectFn, object client.Object) error {
+	log := kLog.FromContext(ctx)
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: device.Namespace}, object)
 	if err != nil && errors.IsNotFound(err) {
 		// Create new k8s object
@@ -649,12 +633,12 @@ func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEos
 			errMsg := fmt.Sprintf("Failed to create %s for CEosLabDevice %s",
 				object, device.Name)
 			log.Error(err, errMsg)
-			r.updateDeviceFail(device, errMsg)
+			r.updateDeviceFail(ctx, device, errMsg)
 		}
 		err = makeObject(object)
 		if err != nil {
 			doCreateObjectError()
-			return false, err
+			return err
 		}
 		object.SetName(name)
 		object.SetNamespace(device.Namespace)
@@ -662,17 +646,16 @@ func (r *CEosLabDeviceReconciler) getOrCreateObject(device *ceoslabv1alpha1.CEos
 		err = r.Create(ctx, object)
 		if err != nil {
 			doCreateObjectError()
-			return false, err
+			return err
 		}
 		log.Info(fmt.Sprintf("Created %s for CEosLabDevice %s", name, device.Name))
-		isNewObject = true
 	} else if err != nil {
 		errMsg := fmt.Sprintf("Failed to get %s for CEosLabDevice %s", name, device.Name)
 		log.Error(err, errMsg)
-		r.updateDeviceFail(device, errMsg)
-		return false, err
+		r.updateDeviceFail(ctx, device, errMsg)
+		return err
 	}
-	return isNewObject, nil
+	return nil
 }
 
 // ConfigMaps and Secrets
